@@ -274,6 +274,13 @@ def refine_positions(signal: np.ndarray, templates: list[ShapeTemplate],position
     # baseline column is at the end. A moved pass replaces its collumn.
     A = np.column_stack([template_column(t, p, n, dt) for t, p in zip(templates, pos)]
                         + baseline_columns(n, baseline))[valid]
+    # The Position Refinement keeps the order of occurrence dictated from the Licht Barrier Passes intact
+    # meaning vehicle A passes LB before vehicle B after refine_positions vehicle B cannot be in front of vehicle A
+    rank = np.argsort(positions, kind="stable")
+    prev_pass = np.full(pos.size, -1)
+    next_pass = np.full(pos.size, -1)
+    prev_pass[rank[1:]] = rank[:-1]
+    next_pass[rank[:-1]] = rank[1:]
     # The refine positions loop
     for _ in range(sweeps):
         moved = False
@@ -284,7 +291,13 @@ def refine_positions(signal: np.ndarray, templates: list[ShapeTemplate],position
             # The shift is guraed by lo and hi, bounds to prevent a template to travel away from its plume
             # It is also prevented that candidates sitting near segment edge travel out of it (0, n-1) bounds.
             # For the current i pass all possible positions are collected and the template centeres are shifted
-            for p in range(max(int(lo[i]), 0), min(int(hi[i]), n - 1) + 1):
+            p_lo = max(int(lo[i]), 0)
+            p_hi = min(int(hi[i]), n - 1)
+            if prev_pass[i] >= 0:
+                p_lo = max(p_lo, int(pos[prev_pass[i]]))
+            if next_pass[i] >= 0:
+                p_hi = min(p_hi, int(pos[next_pass[i]]))
+            for p in range(p_lo, p_hi + 1):
                 col = template_column(templates[i], p, n, dt) if p != pos[i] else None
                 if col is not None:
                     candidates.append(p)
@@ -303,7 +316,7 @@ def refine_positions(signal: np.ndarray, templates: list[ShapeTemplate],position
             y_perp, s_perp = residual[:, 0], residual[:, 1:]
             sse_without = float(y_perp @ y_perp)
             num = s_perp.T @ y_perp
-            den = (s_perp ** 2).sum(axis=1)
+            den = (s_perp ** 2).sum(axis=0)
             gain = np.divide(num ** 2, den, out = np.zeros_like(num), where = num > 0)
             lower = sse_without - gain
 

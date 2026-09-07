@@ -14,14 +14,6 @@ def refine_positions(y: np.ndarray, templates: list[ShapeTemplate], positions: n
                      sigma2: float, sweeps: int = 10, min_dsse: float = 8.0) -> np.ndarray:
     """Refines the peak positions per pass by a coordinate-descent SSE grid search.
 
-    Passes are processed from highest to lowest amplitude, sweeps repeat until nothing
-    moves, a move is only accepted if the SSE improvement can not be explained by noise
-    alone. Per pass every candidate position is scored in closed form (Lagrange-dual
-    projection: all other amplitudes re-optimised, amplitudes clamped at 0 enter through
-    their KKT multipliers), which bounds the BVLS improvement from above, and only
-    candidates that can still win are verified by a real fit (branch and bound). The
-    result equals the plain grid search, see the derivation document of the position
-    refinement and the self-check in __main__.
 
     :param y: Signal of the segment
     :param templates: One template per pass in the segment
