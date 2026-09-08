@@ -8,8 +8,8 @@ Pollutant channel:
     assess_pollutant_peak_centered (window centered on the co2 peak)
 
 All the functions in this module operate in already cut windows provided by template_extraction.py
-Noise Relate parameter estimations are justified in docs/UsageOfNoiseEstimations.md
-TODO: REPLACE path with actual file
+Noise Relate parameter estimations are justified in src/docs/Herleitungen_WIP.pdf
+TODO: Replace WIP pdf with thesis reference once ready.
 """
 # This file contains code created with AI assistance;
 # unless stated otherwise, Anthropic models were used

@@ -235,21 +235,23 @@ def refine_positions(signal: np.ndarray, templates: list[ShapeTemplate],position
                      lo: np.ndarray, hi: np.ndarray, dt: float, baseline: str | None, sigma2: float, sweeps: int = 10,
                      min_dsse: float = 8.0) -> np.ndarray:
     """Refines the roughly offset based Template positioning
+    TODO: Replace WIP pdf with thesis reference once ready.
+    The position refinement process uses a Coordinate Descending approach with a lower bound see filter derived
+    in src/docs/Herleitungen_WIP.pdf: "Peak-Erkennung und Vorlagen Positionierung" to align the Templates in a
+    way that minimizes the segment sse.
+    refine_positions takes a long time when run on pollutant data because the filter cant handle near zero noise driven data.
 
-
-
-
-    :param signal:
-    :param templates:
-    :param positions:
-    :param lo:
-    :param hi:
-    :param dt:
-    :param baseline:
-    :param sigma2:
-    :param sweeps:
-    :param min_dsse:
-    :return:
+    :param signal: Measurement signal of the segment
+    :param templates: Templates of the vehicles in this segment
+    :param positions: Median offset based positions of the template peaks in the segment
+    :param lo: Lowest allowed sample index for pass i
+    :param hi: Highest allowed sample index for pass i
+    :param dt: Sampling time
+    :param baseline: Baseline Methode
+    :param sigma2: Noise variance of the vehicle-free day residual
+    :param sweeps: Maximum number of sweeps, stops early once a sweep moves nothing
+    :param min_dsse: a move is accepted only if SSE drops by more than min_dsse * sigma2
+    :return: Refined peak positions
     """
 
     # Parameter preparation
@@ -306,21 +308,22 @@ def refine_positions(signal: np.ndarray, templates: list[ShapeTemplate],position
             if not candidates:
                 continue
 
-            # The Idea is to let the other plume templates try to fit the signal without moving as best as they can,
-            # this can be done quickly using a regression on the other templates and subtracting the result from the
-            # target.
+            # A Filter is applied that calculates a sse lower bound using a single lstsq fit for all possible
+            # position candidates by regression. The Process is explained in "Peak-Erkennung und Vorlagen Positionierung"
             other_passes = np.delete(A, i, axis=1)
             targets = np.column_stack([valid_signal] + cols)
             residual = targets - other_passes @ np.linalg.lstsq(other_passes, targets, rcond=None)[0]
-            # The Resiudal can now be
             y_perp, s_perp = residual[:, 0], residual[:, 1:]
             sse_without = float(y_perp @ y_perp)
             num = s_perp.T @ y_perp
-            den = (s_perp ** 2).sum(axis=0)
-            gain = np.divide(num ** 2, den, out = np.zeros_like(num), where = num > 0)
+            denom = (s_perp ** 2).sum(axis=0)
+            gain = np.divide(num ** 2, denom, out = np.zeros_like(num), where = num > 0)
+            # Lower bound of the sse
             lower = sse_without - gain
-
             best_sse, best_position = curr_sse - threshold, pos[i]
+
+            # Candidates are checked in order of the lower bound sse by a bvls fit.
+            # The best candidate that could be verified by bvls fit wins and sets the position for the template.
             for j in np.argsort(lower):
                 if lower[j] >= best_sse:
                     break

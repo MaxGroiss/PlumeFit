@@ -9,6 +9,17 @@
 #AI-Assisted: <Fable 5> ; (Implementation came from a Code Review of the pipeline refine_positions)
 # This implementation of refine positions drops a significant amount of runtime, it uses complex bounds to reduce the
 # number of fits through the grid walk. It was not implemented due to lack of understanding the mechanisms behind it.
+
+# This optimization refines the filter approach already used in the pipeline code to further reduce bvls fits,
+# on co2 refinements it barely makes a diffrence as co2 plumes generally have a significant plume that enables the filter to
+# reduce the needed bvls checks on positions suspected to lower the sse significantly, as pollutant peaks are genereally
+# less prominent and often near zero or noisier then co2 peaks the filter implemented in the pipeline can barely reduce the number
+# of needed fits for dsse checking. This is coused by the ols lower bounds following noise and assigning negative values for parameter optimization.
+# The refined filter has a tighter filter with the capability to reduce bvls checks on pollutant
+# data significantly. A Runtime Example from a Dev Repo showed that the pipeline Filter needs 3,5 Seconds on a segment with 30
+# candidates in co2 the refined needs 2,9 seconds (about half the number of fits) and on pollutant the pipeline refine
+# takes 84 seconds so basically the full Gridwalk without a Filter (pollutants are not position refined in the pipeline) and with the refined filter 2,7 seconds.
+# Both filter Methodes converge on the same position for the plumes.
 def refine_positions(y: np.ndarray, templates: list[ShapeTemplate], positions: np.ndarray,
                      lo: np.ndarray, hi: np.ndarray, dt: float, baseline: str | None,
                      sigma2: float, sweeps: int = 10, min_dsse: float = 8.0) -> np.ndarray:
