@@ -256,7 +256,7 @@ def assess_pollutant_peak_centered(windows: np.ndarray, backgrounds: np.ndarray,
     statuses[_null_mask(windows, qa_config.min_physical_value, min_physical_run)] = PlumeStatus.NULL_DATA
     valid = statuses == PlumeStatus.VALID
 
-    # AI-Assisted: <Opus 5> ; (Review, Filter Usage)
+    # AI-Assisted: <Opus 5> ; (Review, Filter Implementation)
 
     # The Pollutant Channel SNR is lower than the CO2 Channel SNR therefor it is smoothened
     # This Filter was chosen because of its capability of removing noise while preserving features (in bounds)
@@ -273,7 +273,7 @@ def assess_pollutant_peak_centered(windows: np.ndarray, backgrounds: np.ndarray,
     for plume_idx in np.flatnonzero(valid):
         # Scipy find_peaks is performed on the smoothed signal window
         rel_peak_candidates, props = find_peaks(smooth[plume_idx], prominence=qa_config.min_prominence_floor)
-        # Regrading prominence a flor is given so peaks underneath a certain threshold (noise peaks)
+        # Regrading prominence a floor is given so peaks underneath a certain threshold (noise peaks)
         # are not even counted as peaks
 
         # Now it is checked if there is one or more clearly prominent peaks (Has to happen on whole Window not

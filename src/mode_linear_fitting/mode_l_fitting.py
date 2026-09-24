@@ -155,45 +155,84 @@ def fit_mode_l(segment: np.ndarray, templates: list[ShapeTemplate],
                           amplitude_se, sse, dof, A @ res.x)
 
 
+def collinearity_grouping(S: np.ndarray, vif_max: float) -> list[np.ndarray]:
+    """Calculates the VIF for the template columns and checks it against the maximum allowed VIF
+    Template columns that cause collinearity in the Designmatrix are grouped. This Approche follows
+    L. Fahrmeir, T. Kneib, und S. Lang, Regression. Berlin, Heidelberg: Springer, 2009. doi: 10.1007/978-3-642-01837-4.
+    Pages 101 and 171.
 
-
-def _separability_shift(template: ShapeTemplate, threshold: float) -> int:
-    """Minimum shift between templates in the design matrix to be considered separable.
-
-    Was done because the threshold means the same for sharp edge templates
-    and slow rise templates.
-
-    :param template: Shape template of the channel
-    :param threshold: Autocorrelation threshold below which the overlap counts as separable
-    :return: Minimum shift in samples
+    :param S: Template Block of the Design Matrix A
+    :param vif_max: Maximum allowed Varianzinflation due to collinearity
+    :return:List of index array, one array per group
     """
-    v = template.values
-    denom = float(v @ v)
-    for s in range(1, v.size):
-        # Calculate the auto-correlation of the template
-        if float(v[s:] @ v[:-s]) / denom < threshold:
-            return s
-    return v.size
+    k = S.shape[1]
+    if k == 0:
+        return []
+    vif = None
+    # Calculating Gram Matrix
+    gramm_init = S.T @ S
+
+    groups = [np.array([j]) for j in range(k)]
+
+    #AI-Assisted: <Opus 5> ; (Usage of W Wight Matrix to reduce the need to Calculate full Gram Matrix more than once)
+    # The weight Matrix is used to eliminate the need of recalculating the gram matrix, it captures the weight every template
+    # has in a group. Initially it is the identity matrix (template 1 has full weight in group 1) after template 1 and
+    # 2 are merged it states that those two templates weight equally in group 1 (mean of the two templates is the
+    # new template. After the first grouping the Gram Matrix would need re calculation in the form of (S @ W).T @ (S @ W)
+    # By using S W)^T (S W) = W^T (S^T S) W = W^T G0 W this can be reduced to a less intensive calculation W.T @ G0 @ W
+    W = np.eye(k)
+
+    # Merging continues till there is only one group left or the VIF threshold is met
+    while W.shape[1] > 1:
+        gramm = W.T @ gramm_init @ W
+        d = np.diag(gramm)
+
+        # Due to the fact that np.linalg.inv can throw a LinAlgError for singularity the calculation is wrapt in a
+        # try catch, the catch path only happens on exact collinearity, then the most similar neighbors are merged
+        # before the calculation continues.
+        try:
+            vif = d * np.diag(np.linalg.inv(gramm))
+            # np.linalg.inv can produce nonsense for near singular gramm, this is guarded by stating that a valid
+            # vif is always >= 1 (R^2 in VIF = 1 / 1- R^2 lies between 0 and 1), the value 0,999 is chosen due to float
+            # rounding behavior
+            vif_valid = bool(np.all(vif >= 0.999))
+        except np.linalg.LinAlgError:
+            vif_valid = False
+
+        # The vif already satisfies the threshold
+        if vif_valid and vif.max() <= vif_max:
+            break
 
 
-def _merge_groups(local_pos: np.ndarray, min_sep: int) -> list[np.ndarray]:
-    """Groups vehicle passes that don't pass min_sep (templates are too close).
-
-    If vehicle A and B are too close and B and C are too close -> A, B, C are in one group.
-
-    :param local_pos: Peak positions relative to the segment start
-    :param min_sep: Minimum separable shift in samples
-    :return: List of index arrays, one array per group
-    """
-    # AI Assisted-by: Claude Fable (5) (comments and code written by hand)
-    order = np.argsort(local_pos)
-    groups = [[order[0]]]
-    for i in order[1:]:
-        if local_pos[i] - local_pos[groups[-1][-1]] < min_sep:
-            groups[-1].append(i)
+        # The similarity between neighbors is calculated over the cosine (correlation)
+        # the algorithm only merges direct neighbors.
+        cos_nbr = np.diag(gramm,1)/np.sqrt(d[:-1] * d[1:])
+        if vif_valid:
+            # The collumn with the largest vif is merged with its more similar neighbor
+            j = int(np.argmax(vif))
+            # Check for segment edges (only one neighbor)
+            if j == 0:
+                lo = 0
+            elif j == W.shape[1] - 1:
+                lo = j - 1
+            else:
+                lo = j - 1 if cos_nbr[j - 1] >= cos_nbr[j] else j
         else:
-            groups.append([i])
-    return [np.asarray(g) for g in groups]
+            # Exact collinearity -> vif could not be calculated the most similar neighbor pair is merged
+            lo = int(np.argmax(cos_nbr))
+
+        # Merge groups lo and lo + 1
+        merged = np.concatenate([groups[lo], groups[lo + 1]])
+        groups[lo] = merged
+        del groups[lo + 1]
+
+        #Recalculate the weight matrix
+        w = np.zeros(k)
+        w[merged] = 1.0 / merged.size
+        W[:, lo] = w
+        W = np.delete(W, lo + 1, axis=1)
+
+    return groups
 
 
 def segment_day(n: int, pass_sample_idx: np.ndarray,
@@ -238,8 +277,8 @@ def refine_positions(signal: np.ndarray, templates: list[ShapeTemplate],position
     TODO: Replace WIP pdf with thesis reference once ready.
     The position refinement process uses a Coordinate Descending approach with a lower bound see filter derived
     in src/docs/Herleitungen_WIP.pdf: "Peak-Erkennung und Vorlagen Positionierung" to align the Templates in a
-    way that minimizes the segment sse.
-    refine_positions takes a long time when run on pollutant data because the filter cant handle near zero noise driven data.
+    way that minimizes the segment sse. refine_positions takes a long time when run on pollutant data because
+    the filter cant handle near zero noise driven data.
 
     :param signal: Measurement signal of the segment
     :param templates: Templates of the vehicles in this segment
@@ -411,10 +450,8 @@ def fit_day(register: MeasurementRegister, channel: str, template: ShapeTemplate
     centers = (run_starts + run_stops) / 2
     # Median of the residual in the quiet area, one area median per center
     levels = np.array([np.median(residual[a:b]) for a, b in zip(run_starts, run_stops)])
-    # Minimum necessary shift between templates in design matrix to be considered separable
-    # With per-pass templates the conservative maximum over the distinct templates is used
-    distinct_templates = {id(t): t for t in templates}.values()
-    min_sep = max((_separability_shift(t, cfg.merge_corr_threshold) for t in distinct_templates), default=1)
+
+
     records = []
     for seg in segments:
         # Signal in the segment
@@ -466,7 +503,12 @@ def fit_day(register: MeasurementRegister, channel: str, template: ShapeTemplate
                                          sigma2 = free_sigma ** 2, sweeps = cfg.refine_sweeps,
                                          min_dsse = cfg.refine_min_dsse)
             # Merge peaks that are considered non-separable
-            groups = _merge_groups(local, min_sep)
+            order = np.argsort(local, kind="stable")
+            cols = [template_column(seg_templates[i], local[i], y.size, dt) for i in order]
+            if any(c is None for c in cols):
+                raise ValueError("template column has too little area in window")
+            S = np.column_stack(cols)[np.isfinite(y)]
+            groups = [order[g] for g in collinearity_grouping(S, cfg.merge_vif_max)]
             # A group only gets one collum placed at the mean of the members
             col_pos = np.array([int(round(local[g].mean())) for g in groups])
             # Merged groups get a Farren-like composite column: the member templates are

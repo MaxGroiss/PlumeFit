@@ -169,7 +169,7 @@ class ModeLConfig:
                         to be considered an anchor
         t_min_linear: (timedelta64(x, "s")) Minimum segment span for a linear baseline fit
         n_anchor_min: (int) Minimum anchor samples for a fitted baseline (below -> anchored_fixed)
-        merge_corr_threshold: (float) Correlation Threshold for overlapping templates to be considered inseparable
+        merge_vif_max: (float) Maximum variance inflation factor of a template column before it is merged with a neighbor
         noise_band_sigma: (float) Width of the quiet-detection noise band in sigma
         min_physical_value: (float) All values below this are counted as faulty (set to nan)
         min_physical_run: (timedelta64(x, "s")) Minimum consecutive below-threshold seconds to count as faulty
@@ -188,7 +188,7 @@ class ModeLConfig:
     t_min_linear: np.timedelta64 = np.timedelta64(60, "s")
     n_anchor_min: int = 10
 
-    merge_corr_threshold: float = 0.95
+    merge_vif_max: float = 10.0
 
     noise_band_sigma: float = 3.0
 
@@ -196,7 +196,7 @@ class ModeLConfig:
     min_physical_run: np.timedelta64 = np.timedelta64(2, "s")
 
     bg_percentile: float = 2.0
-    bg_rolling_window: np.timedelta64 = np.timedelta64(50, "s")
+    bg_rolling_window: np.timedelta64 = np.timedelta64(100, "s")
 
     force_anchored_fixed: bool = False
 

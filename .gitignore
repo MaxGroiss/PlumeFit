@@ -169,3 +169,4 @@ cython_debug/
 /.idea/dictionaries/project.xml
 /.idea/inspectionProfiles/profiles_settings.xml
 /.idea/modules.xml
+/campaign_data/

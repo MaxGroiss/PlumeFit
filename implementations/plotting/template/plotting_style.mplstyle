@@ -1,0 +1,125 @@
+# thesis.mplstyle
+# Allgemeiner Plot-Style für wissenschaftliche Dokumente (Arbeiten, Berichte, Paper)
+#
+# Grundidee:
+#   - Plots werden in der tatsächlichen Textbreite des Dokuments erzeugt
+#     (über thesis_plot.figsize()) und ohne Skalierung eingebunden.
+#     Dadurch entsprechen die Schriftgrößen unten 1:1 den Größen im fertigen PDF.
+#   - Schrift passend zur Fließtextschrift des Dokuments wählen
+#     (Voreinstellung: Libertinus Serif, Nachfolger von Linux Libertine).
+#
+# Anpassen für ein anderes Dokument:
+#   - Schrift:       font.serif und mathtext.* unten
+#   - Textbreite:    thesis_plot.setup(textwidth_mm=...)
+#   - Schriftgrößen: font.size & Co. (Faustregel: 1-2 pt kleiner als der Fließtext)
+
+# === Figure =============================================================
+figure.figsize:          6.299, 3.150     # Platzhalter, wird über thesis_plot.figsize() gesetzt
+figure.dpi:              150
+figure.facecolor:        white
+figure.constrained_layout.use: True       # Ränder automatisch, Figurgröße bleibt exakt
+figure.constrained_layout.h_pad: 0.03
+figure.constrained_layout.w_pad: 0.03
+figure.constrained_layout.hspace: 0.04
+figure.constrained_layout.wspace: 0.04
+
+savefig.dpi:             300
+savefig.facecolor:       white
+savefig.bbox:            standard         # NICHT tight: sonst stimmt die Breite nicht mehr
+savefig.transparent:     False
+
+# === Schrift ============================================================
+# Muss systemweit installiert sein, damit matplotlib sie findet.
+# Fallback-Kette: erste gefundene Schrift wird verwendet.
+font.family:             serif
+font.serif:              Libertinus Serif, Linux Libertine O, DejaVu Serif
+font.size:               10
+axes.titlesize:          10
+axes.labelsize:          10
+xtick.labelsize:         9
+ytick.labelsize:         9
+legend.fontsize:         9
+legend.title_fontsize:   9
+figure.titlesize:        10
+
+# Formelsatz in derselben Schrift wie der Text (statt Computer Modern).
+# Für Dokumente in Computer/Latin Modern: mathtext.fontset: cm und die
+# folgenden mathtext.*-Zeilen entfernen.
+mathtext.fontset:        custom
+mathtext.rm:             Libertinus Serif
+mathtext.it:             Libertinus Serif:italic
+mathtext.bf:             Libertinus Serif:bold
+mathtext.bfit:           Libertinus Serif:bold:italic
+mathtext.sf:             Libertinus Serif
+mathtext.cal:            Libertinus Serif:italic
+mathtext.fallback:       stix
+mathtext.default:        it
+
+# Dezimalkomma (optional) wird in thesis_plot.setup() bzw. save() gesetzt,
+# da es sich über rcParams nicht sauber einstellen lässt.
+axes.formatter.use_mathtext: True
+axes.formatter.limits:   -3, 4
+axes.unicode_minus:      True
+
+# === Achsen =============================================================
+axes.linewidth:          0.6
+axes.edgecolor:          black
+axes.labelcolor:         black
+axes.facecolor:          white
+axes.grid:               True
+axes.axisbelow:          True
+axes.spines.top:         False
+axes.spines.right:       False
+axes.labelpad:           3.0
+axes.titlepad:           4.0
+axes.xmargin:            0
+axes.ymargin:            0.05
+
+# === Grid ===============================================================
+grid.color:              "#d0d0d0"
+grid.linestyle:          -
+grid.linewidth:          0.4
+
+# === Ticks ==============================================================
+xtick.direction:         in
+ytick.direction:         in
+xtick.color:             black
+ytick.color:             black
+xtick.major.size:        3.0
+ytick.major.size:        3.0
+xtick.minor.size:        1.5
+ytick.minor.size:        1.5
+xtick.major.width:       0.6
+ytick.major.width:       0.6
+xtick.minor.width:       0.4
+ytick.minor.width:       0.4
+xtick.minor.visible:     True
+ytick.minor.visible:     True
+
+# === Linien / Marker ====================================================
+lines.linewidth:         1.0
+lines.markersize:        3.5
+lines.markeredgewidth:   0.5
+patch.linewidth:         0.6
+errorbar.capsize:        2
+scatter.edgecolors:      face
+
+# === Legende ============================================================
+legend.frameon:          True
+legend.framealpha:       0.9
+legend.edgecolor:        "#d0d0d0"
+legend.fancybox:         False
+legend.borderpad:        0.4
+legend.labelspacing:     0.3
+legend.handlelength:     1.8
+legend.handletextpad:    0.5
+legend.borderaxespad:    0.4
+
+# === Farben (Paul Tol "bright", farbenblind-tauglich) ===================
+axes.prop_cycle:         cycler('color', ['0077BB', 'EE7733', '009988', 'CC3311', '33BBEE', 'EE3377', 'BBBBBB'])
+image.cmap:              viridis
+
+# === Export =============================================================
+pdf.fonttype:            42               # TrueType einbetten
+ps.fonttype:             42
+svg.fonttype:            path             # Text als Pfade -> sieht in jedem Programm identisch aus

@@ -246,7 +246,7 @@ def extract_plumes(register: MeasurementRegister,
     # The influence mask covers ALL vehicle passes, not only the isolated ones
     all_pass_idx = np.searchsorted(register.timestamps, register.vehicle_pass_times)
     influenced = influence_mask(len(co2_data), all_pass_idx, window_before_lb, window_after_lb)
-    # tail_len = tail of the peak centered window, needed for the H0 tail calibration
+    # tail_len = tail of the peak centered window, needed for the tail calibration
     co2_qa = resolve_qa_thresholds(config.co2_qa, co2_data - co2_bg_series, influenced,
                                    tail_len=window_after_peak)
 
