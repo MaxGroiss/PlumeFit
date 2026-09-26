@@ -275,11 +275,15 @@ def assess_pollutant_peak_centered(windows: np.ndarray, backgrounds: np.ndarray,
         rel_peak_candidates, props = find_peaks(smooth[plume_idx], prominence=qa_config.min_prominence_floor)
         # Regrading prominence a floor is given so peaks underneath a certain threshold (noise peaks)
         # are not even counted as peaks
+        if rel_peak_candidates.size == 0:
+            statuses[plume_idx] = PlumeStatus.NO_PEAK
+            continue
 
         # Now it is checked if there is one or more clearly prominent peaks (Has to happen on whole Window not
         # just the small search frame)
         peak_heights = smooth[plume_idx, rel_peak_candidates] - backgrounds[plume_idx]
-        prom_valid = props["prominences"] >= qa_config.min_prominence_ratio * peak_heights
+        main_peak_height = peak_heights.max()
+        prom_valid = props["prominences"] >= qa_config.min_prominence_ratio * main_peak_height
         height_valid = peak_heights >= qa_config.min_peak_above_bg
         prominent_peak_candidates = rel_peak_candidates[prom_valid & height_valid]
 
