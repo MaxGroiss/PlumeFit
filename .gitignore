@@ -170,3 +170,9 @@ cython_debug/
 /.idea/inspectionProfiles/profiles_settings.xml
 /.idea/modules.xml
 /campaign_data/
+/implementations/helpers/results/vehicle_mapping_madre_cabrini.csv
+/implementations/helpers/results/pass_tug_mapping.csv
+/implementations/helpers/results/debug/03_matches.csv
+/implementations/helpers/results/debug/02_anpr_passes.csv
+/implementations/helpers/results/debug/01_lb_passes.csv
+/.idea/csv-editor.xml
