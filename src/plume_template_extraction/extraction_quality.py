@@ -28,7 +28,7 @@ from src.shared_services.noise_and_background import estimate_noise, contiguous_
 
 
 
-def _null_mask(windows: np.ndarray, min_physical_value: float, min_physical_run: int) -> np.ndarray:
+def null_data_mask(windows: np.ndarray, min_physical_value: float, min_physical_run: int) -> np.ndarray:
     # NULL_DATA criterion: any nan or below-physical value inside the window
     return (np.isnan(windows).any(axis=1)
             | faulty_recording_mask(windows, min_physical_value, min_physical_run).any(axis=1))
@@ -138,7 +138,7 @@ def assess_vectorized_lb_centered(plumes: np.ndarray, samples_before: int, peak_
     """
 
     # Checks every plume on nan and below physical value -> NULL_DATA
-    null_mask = _null_mask(plumes, qa_config.min_physical_value, min_physical_run)
+    null_mask = null_data_mask(plumes, qa_config.min_physical_value, min_physical_run)
 
     # Peak search in the window of interest (search window after the LB pass), high SNR -> plain argmax
     window = plumes[:, samples_before:samples_before + peak_search_window]
@@ -196,23 +196,31 @@ def check_multiple_peaks(plume: np.ndarray, peak_idx: int, background: float,
 
 
 def assess_iterative_peak_centered(plumes: np.ndarray, backgrounds: np.ndarray, peak_index: int,
-                                   window_after: int, qa_config: ChannelQAConfig) -> np.ndarray:
+                                   window_after: int, qa_config: ChannelQAConfig, min_physical_run: int = 1) -> np.ndarray:
     """
     Iterative assessment of plume quality based on peak centered plumes.
+
 
     :param plumes: (np.ndarray) Peak Centered Plumes
     :param backgrounds: (np.ndarray) Background values
     :param peak_index: (int) Index of the Main Peak of the Plume (Window constraints left)
     :param window_after: (int) Window constraints right
     :param qa_config: (ChannelQAConfig) QA configuration
+    :param min_physical_run: Minimum consecutive below-threshold samples to count as faulty
     :return: (np.ndarray) List of plume statuses
     """
     statuses = []
 
     tail_smooth_window = _tail_smooth_window(window_after)
 
+    # Checks every plume on nan and below physical value -> NULL_DATA
+    null_mask = null_data_mask(plumes, qa_config.min_physical_value, min_physical_run)
     # Checks every plume for multiple peaks and tail anomaly
-    for plume, bg in zip(plumes, backgrounds):
+    for plume, bg, is_null in zip(plumes, backgrounds, null_mask):
+
+        if is_null:
+            statuses.append(PlumeStatus.NULL_DATA)
+            continue
 
         if check_multiple_peaks(plume, peak_index, bg, qa_config.min_prominence_ratio,
                                 qa_config.min_prominence_floor):
@@ -253,7 +261,7 @@ def assess_pollutant_peak_centered(windows: np.ndarray, backgrounds: np.ndarray,
     offsets = np.zeros(number_of_plumes, dtype=int)
 
     # Guard against below physical value and nan
-    statuses[_null_mask(windows, qa_config.min_physical_value, min_physical_run)] = PlumeStatus.NULL_DATA
+    statuses[null_data_mask(windows, qa_config.min_physical_value, min_physical_run)] = PlumeStatus.NULL_DATA
     valid = statuses == PlumeStatus.VALID
 
     # AI-Assisted: <Opus 5> ; (Review, Filter Implementation)

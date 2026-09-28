@@ -22,7 +22,9 @@ from src.plume_template_extraction.plume_status import PlumeStatus
 from src.shared_services.noise_and_background import compute_background_series, influence_mask
 
 from src.plume_template_extraction.extraction_quality import (assess_vectorized_lb_centered,
-     assess_iterative_peak_centered, assess_pollutant_peak_centered, resolve_qa_thresholds)
+                                                              assess_iterative_peak_centered,
+                                                              assess_pollutant_peak_centered, resolve_qa_thresholds,
+                                                              null_data_mask)
 
 
 def _qa_counts(statuses: np.ndarray) -> dict[PlumeStatus, int]:
@@ -70,17 +72,20 @@ def zero_baseline_start(centered_normalized_matrix: np.ndarray, n_start: int = 3
     return centered_normalized_matrix - offset[:, None]
 
 
-def normalize_area(centered_matrix: np.ndarray, dt: float) -> np.ndarray:
+def normalize_area(centered_matrix: np.ndarray, dt: float, channel_name = "", day = "" ) -> np.ndarray:
     """Scale each plume so its integral (sum × dt) equals 1.
+
 
     :param centered_matrix: (np.ndarray) Centered plumes.
     :param dt: (float) Sampling interval in seconds.
+    :param day:
+    :param channel_name:
     :returns: (np.ndarray) Area-normalized plume matrix.
     :raises ValueError: If any plume has zero area.
     """
     areas = (np.sum(centered_matrix, axis=1, keepdims=True) * dt)
     if np.any(areas <= 0):
-        raise ValueError("Zero Emission area detected")
+        raise ValueError(f"{channel_name} on {day} : Zero Emission area detected")
 
     return centered_matrix / areas
 
@@ -279,7 +284,8 @@ def extract_plumes(register: MeasurementRegister,
     statuses_pc_i =assess_iterative_peak_centered(plumes=co2_plumes, backgrounds=co2_bg_f,
                                                   peak_index=window_before_peak,
                                                   window_after=window_after_peak,
-                                                  qa_config=co2_qa)
+                                                  qa_config=co2_qa,
+                                                  min_physical_run=co2_phys_run)
 
     # Peak Centered Cutout Boundaries may have dropped plumes that are still valid in valid_lbc_plumes_idx
     # This only applies if the peak centered cutout is greater than the initial light barrier cutout window
@@ -331,6 +337,10 @@ def extract_plumes(register: MeasurementRegister,
         poll_plumes, poll_in_bounds = cut_around_peak(
             poll_data, poll_peak_idx, window_before_peak, window_after_peak)
 
+        poll_null = np.zeros(poll_loc_status.shape[0], dtype=bool)
+        poll_null[poll_in_bounds] = null_data_mask(
+            poll_plumes, config.pollutant_qa.min_physical_value,
+            config.as_samples(config.pollutant_qa.min_physical_run, dt))
         # For a pollutant plume to be finally valid it has to have a valid co2 plume, be in bounds (poll_in_bounds)
         # and counted as valid in find_pollutant_peak -> poll_loc_status
         combined_poll_mask = co2_valid & (poll_loc_status == PlumeStatus.VALID) & poll_in_bounds
@@ -341,7 +351,7 @@ def extract_plumes(register: MeasurementRegister,
         # Building Pollutant Output
         poll_result = ExtractionResult(
             channel=config.poll_channel, config=config,
-            normalized_matrix=zero_baseline_start(normalize_area(valid_poll_plumes, dt)), # -> Normalize
+            normalized_matrix=zero_baseline_start(normalize_area(valid_poll_plumes, dt, channel_name=config.poll_channel, day=source_day)), # -> Normalize
             centered_matrix=valid_poll_plumes,
             peak_index=window_before_peak, dt=dt,
             pass_indices=valid_passes[valid_lbc_plumes_idx[combined_poll_mask]],
@@ -357,7 +367,7 @@ def extract_plumes(register: MeasurementRegister,
 
     co2_result = ExtractionResult(
         channel=config.co2_channel, config=config,
-        normalized_matrix=zero_baseline_start(normalize_area(valid_co2_plumes, dt)),
+        normalized_matrix=zero_baseline_start(normalize_area(valid_co2_plumes, dt,channel_name=config.co2_channel,day=source_day)),
         centered_matrix=valid_co2_plumes,
         peak_index=window_before_peak, dt=dt,
         pass_indices=valid_passes[valid_lbc_plumes_idx[co2_out]],

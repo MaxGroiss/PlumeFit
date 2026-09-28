@@ -1,4 +1,10 @@
-# This file contains the code that lead to the results in "Extrahierte Vorlagen und QA-Statistik"
+"""Code Template for the Extraction Pipeline of PlumeFit
+
+Loads the campaign data (one MeasurementRegister per day), builds one Extraction Config per instrument pair
+and runs the batch extraction. All extraction/QA parameters stay at their defaults. min_physical_value is set per
+channel (hand-tuned by design) !
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,7 +22,7 @@ MERGED_DATA = ROOT_DIR / "campaign_data" / "Merged_data"
 PASS_TIMES_CSV = ROOT_DIR / "campaign_data" / "CARES_Milan_Madre_Cabrini_TUG_emission_ratios_allemissions_co2_4_80_ppm_3s.csv"
 
 # Days with a lot of faulty data can be excluded here (e.g. "2021-10-11")
-EXCLUDE_DAYS = ["2021-10-11"]
+EXCLUDE_DAYS: set[str] = set()
 
 # ----------------------------------------------------------------------------- configuration
 # Everything except min_physical_value stays at the defaults -> noise-derived thresholds (None) are used
