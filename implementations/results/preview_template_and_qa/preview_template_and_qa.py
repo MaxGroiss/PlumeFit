@@ -149,7 +149,9 @@ if __name__ == "__main__":
     registers = load_registers()
     batch = run_extraction(registers, build_configs(PAIRS))
     combined = batch.combined_by_channel()   # channel -> CombinedResult (input for the template plots)
+    export_path =  Path(__file__).parent / "result" / "extraction"
     for ch, cr in combined.items():
+        cr.to_csv(path=export_path / f"{ch}.csv",normalized=False)
         print(f"  {ch:14s}: {cr.n_valid:5d} valid plumes")
 
     # File Specifics

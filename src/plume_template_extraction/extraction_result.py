@@ -17,10 +17,14 @@ template_extraction_batch(loops: template_extraction -> One Channel One Day -> E
 
 from __future__ import annotations
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
+from numpy.matrixlib.defmatrix import matrix
 
 from src.plume_template_extraction.extraction_config import ExtractionConfig
+from src.plume_template_extraction.normalization import zero_baseline_start, normalize_area
 from src.plume_template_extraction.plume_status import PlumeStatus
 
 
@@ -197,6 +201,84 @@ class CombinedResult(_PlumeStats):
         nm = mean / (np.sum(mean) * self.dt)
 
         return nm
+
+    def to_dataframe(self, normalized: bool = True) -> pd.DataFrame:
+        """Converts the CombinedResult into a Pandas DataFrame.
+        The Plume samples are per column with header names as time stamp around the peak
+        :param normalized: (bool) Export the centered or normalized plume matrix
+                            The normalized matrix can be reconstructed from the centered one
+        :return: pd.DataFrame
+        """
+        attach_matrix = self.normalized_matrix if normalized else self.centered_matrix
+        meta = {"channel": self.channel,
+                "source_day": self.source_days.astype(str),
+                "pass_index": self.pass_indices.astype(int),
+                "normalized:": normalized}
+        if self.trigger_delays is not None:
+            meta["trigger_delays"] = self.trigger_delays
+        if self.pollutant_offsets is not None:
+            meta["pollutant_offsets"] = self.pollutant_offsets
+        samples = pd.DataFrame(attach_matrix, columns=[f"t_{t:.3f}" for t in self.time_axis])
+        return pd.concat([pd.DataFrame(meta),samples],axis=1)
+
+
+    def to_csv(self, path: Path, normalized: bool = True) -> None:
+        """Converts the CombinedResult into a Pandas DataFrame fia to_dataframe and saves it as a .csv at path"""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.to_dataframe(normalized).to_csv(path, index=False, float_format="%.6g")
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame, dt_rounding: int = 6) -> CombinedResult:
+        """Build a CombinedResult from a Pandas DataFrame.
+        The format has to be the one created by to_dataframe.
+        If the read dataframe only contains the normalized plume matrix, the centered matrix cannot be recovered and
+        therefore is filled wir NaN
+        """
+        if df.empty:
+            raise ValueError("Empty dataframe")
+
+        sample_columns = df.columns[df.columns.str.startswith("t_")]
+        # Sample times start at character 3 in header
+        times = sample_columns.str[2:].astype(float).to_numpy()
+        dt = round(float(np.median(np.diff(times))), dt_rounding)
+        # Peak should be at 0 argmin is more robust than a == 0
+        peak_index = int(np.argmin(np.abs(times)))
+        # AI-Assisted: <Opus 5> ; (Catch not equidistant time axis with peak not at 0)
+        if not np.allclose(np.diff(times), dt) or not np.isclose(times[peak_index], 0.0):
+            raise ValueError("Sample columns are not an equidistant time axis with t = 0 at the peak")
+        # checks if all rows in the dataframe are form the same channel and are the same matrix type
+        for col in ("channel", "normalized"):
+            if df[col].nunique() != 1:
+                raise ValueError(f"Mixed values in column '{col}': {df[col].unique()}")
+        channel = str(df["channel"].iloc[0])
+        # Read Matrix and if centered reconstruct the normalized matrix
+        df_matrix = df[sample_columns].to_numpy(dtype=np.float64)
+        if bool(df["normalized"].iloc[0]):
+            normalized_matrix, centered_matrix = df_matrix, np.full_like(df_matrix, np.nan)
+        else:
+            centered_matrix = df_matrix
+            normalized_matrix = zero_baseline_start(normalize_area(df_matrix,dt,channel_name=channel))
+
+        return cls(normalized_matrix=normalized_matrix,
+                   centered_matrix=centered_matrix,
+                   peak_index=peak_index,
+                   dt=dt,
+                   channel=channel,
+                   pass_indices=df["pass_index"].to_numpy(dtype=int),
+                   source_days=df["source_day"].astype(str).to_numpy(),
+                   pollutant_offsets=df["pollutant_offset"].to_numpy() if "pollutant_offset" in df.columns else None,
+                   trigger_delays=df["trigger_delay"].to_numpy() if "trigger_delay" in df.columns else None)
+
+    @classmethod
+    def from_csv(cls, path: Path) -> CombinedResult:
+        """Build a CombinedResult from a csv.
+                The format has to be the one created by to_dataframe.
+                If the read dataframe only contains the normalized plume matrix, the centered matrix cannot be recovered and
+                therefore is filled wir NaN
+                """
+        return cls.from_dataframe(pd.read_csv(path, dtype={"source_day": str}))
+
 
 
 def combine_results(channel_results: list[ExtractionResult], dt_rounding: int = 6) -> CombinedResult:
