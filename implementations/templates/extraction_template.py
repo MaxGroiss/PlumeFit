@@ -11,18 +11,20 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.plume_template_extraction.plume_status import PlumeStatus
 from src.shared_services.measurement_register import MeasurementRegister
 from src.plume_template_extraction.extraction_config import ExtractionConfig, ChannelQAConfig
 from src.plume_template_extraction.extraction_result import BatchResult
 from src.plume_template_extraction.template_extraction import run_batch
 
 # ----------------------------------------------------------------------------- paths
-ROOT_DIR = Path(__file__).resolve().parents[3]
+ROOT_DIR = Path(__file__).resolve().parents[2]
+# Paths may need adjustment
 MERGED_DATA = ROOT_DIR / "campaign_data" / "Merged_data"
 PASS_TIMES_CSV = ROOT_DIR / "campaign_data" / "CARES_Milan_Madre_Cabrini_TUG_emission_ratios_allemissions_co2_4_80_ppm_3s.csv"
 
 # Days with a lot of faulty data can be excluded here (e.g. "2021-10-11")
-EXCLUDE_DAYS: set[str] = set()
+EXCLUDE_DAYS = ["2021-10-11"]
 
 # ----------------------------------------------------------------------------- configuration
 # Everything except min_physical_value stays at the defaults -> noise-derived thresholds (None) are used
@@ -75,10 +77,45 @@ def run_extraction(registers: list[MeasurementRegister],
     """Runs every config on every day."""
     return run_batch([(reg, configs) for reg in registers])
 
+# ----------------------------------------------------------------------------------------------
+# QA Statistiks
+def get_qa_statistics(batch: BatchResult, out_path: Path | None = None, per_day: bool = False) -> pd.DataFrame:
+    """ Creates a .csv from the qa summary of a batch extraction"""
+    rows = []
+    for channel, results in batch.grouped_by_channel().items():
+        for r in results:
+            is_poll = r.config.poll_channel == channel
+            rows.append({"channel": channel,
+                         "reference": r.config.co2_channel if is_poll else "",
+                         "day": r.source_day,
+                         "n_isolated": r.n_isolated,
+                         **{s.value: r.qa_counts[s] for s in PlumeStatus},
+                         "n_template": r.n_valid})
+
+    table = pd.DataFrame(rows)
+    if not per_day:
+        table = (table.drop(columns="day")
+                 .groupby(["channel", "reference"], as_index=False, sort=False).sum())
+
+    if out_path is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(out_path, index=False)
+    return table
+
+
+
+
+
 
 if __name__ == "__main__":
     registers = load_registers()
     batch = run_extraction(registers, build_configs(PAIRS))
-    combined = batch.combined_by_channel()   # channel -> CombinedResult (input for the template plots)
+    combined = batch.combined_by_channel()
+    export_path = Path(__file__).parent / "result" / "extraction"
     for ch, cr in combined.items():
         print(f"  {ch:14s}: {cr.n_valid:5d} valid plumes")
+        # Export the Results to a CSV per Channel
+        cr.to_csv(path=export_path / f"{ch}.csv", normalized=False)
+
+    # Save QA-Statistik of Export
+    #qa = get_qa_statistics(batch, Path(__file__).parent / "result" / "qa_summary.csv")

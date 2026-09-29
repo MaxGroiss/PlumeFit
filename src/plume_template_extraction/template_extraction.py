@@ -14,7 +14,8 @@ from __future__ import annotations
 from collections import Counter
 import numpy as np
 
-from src.plume_template_extraction.normalization import normalize_area, zero_baseline_start
+from src.plume_template_extraction.normalization import normalize_area, zero_baseline_start, normalize_plumes, \
+    positive_area_mask
 from src.shared_services.measurement_register import MeasurementRegister
 from src.plume_template_extraction.extraction_config import ChannelQAConfig, ExtractionConfig
 from src.plume_template_extraction.extraction_result import ExtractionResult, BatchResult
@@ -273,7 +274,10 @@ def extract_plumes(register: MeasurementRegister,
 
     poll_result = None
     co2_valid = statuses_final[valid_lbc_plumes_idx] == PlumeStatus.VALID
-
+    area_ok = np.ones_like(co2_valid)  # out-of-bounds plumes are not VALID anyway
+    area_ok[co2_in_bounds] = positive_area_mask(co2_plumes - co2_bg_f[:, None], dt)
+    statuses_final[valid_lbc_plumes_idx[co2_valid & ~area_ok]] = PlumeStatus.NON_POSITIVE_AREA
+    co2_valid = co2_valid & area_ok
     # poll_channel is None => co2 only run
     if config.poll_channel is None:
         # This is only defined so the output can work with one variable for both cases
@@ -319,11 +323,15 @@ def extract_plumes(register: MeasurementRegister,
 
         # poll_in_bounds is needed because cut_around_peak only returns the in bound plumes
         valid_poll_plumes = poll_plumes[combined_poll_mask[poll_in_bounds]] - poll_bg[combined_poll_mask][:, None]
-
+        poll_area_ok = positive_area_mask(valid_poll_plumes, dt)
+        bad = np.flatnonzero(combined_poll_mask)[~poll_area_ok]
+        poll_loc_status[bad] = PlumeStatus.NON_POSITIVE_AREA
+        combined_poll_mask[bad] = False
+        valid_poll_plumes = valid_poll_plumes[poll_area_ok]
         # Building Pollutant Output
         poll_result = ExtractionResult(
             channel=config.poll_channel, config=config,
-            normalized_matrix=zero_baseline_start(normalize_area(valid_poll_plumes, dt, channel_name=config.poll_channel, day=source_day)), # -> Normalize
+            normalized_matrix=normalize_plumes(valid_poll_plumes, dt, channel_name=config.poll_channel, day=source_day),
             centered_matrix=valid_poll_plumes,
             peak_index=window_before_peak, dt=dt,
             pass_indices=valid_passes[valid_lbc_plumes_idx[combined_poll_mask]],
@@ -339,7 +347,7 @@ def extract_plumes(register: MeasurementRegister,
 
     co2_result = ExtractionResult(
         channel=config.co2_channel, config=config,
-        normalized_matrix=zero_baseline_start(normalize_area(valid_co2_plumes, dt,channel_name=config.co2_channel,day=source_day)),
+        normalized_matrix=normalize_plumes(valid_co2_plumes, dt, channel_name=config.co2_channel, day=source_day),
         centered_matrix=valid_co2_plumes,
         peak_index=window_before_peak, dt=dt,
         pass_indices=valid_passes[valid_lbc_plumes_idx[co2_out]],

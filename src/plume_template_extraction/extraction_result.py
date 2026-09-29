@@ -24,7 +24,7 @@ import pandas as pd
 from numpy.matrixlib.defmatrix import matrix
 
 from src.plume_template_extraction.extraction_config import ExtractionConfig
-from src.plume_template_extraction.normalization import zero_baseline_start, normalize_area
+from src.plume_template_extraction.normalization import zero_baseline_start, normalize_area, normalize_plumes
 from src.plume_template_extraction.plume_status import PlumeStatus
 
 
@@ -213,11 +213,11 @@ class CombinedResult(_PlumeStats):
         meta = {"channel": self.channel,
                 "source_day": self.source_days.astype(str),
                 "pass_index": self.pass_indices.astype(int),
-                "normalized:": normalized}
+                "normalized": normalized}
         if self.trigger_delays is not None:
-            meta["trigger_delays"] = self.trigger_delays
+            meta["trigger_delay"] = self.trigger_delays
         if self.pollutant_offsets is not None:
-            meta["pollutant_offsets"] = self.pollutant_offsets
+            meta["pollutant_offset"] = self.pollutant_offsets
         samples = pd.DataFrame(attach_matrix, columns=[f"t_{t:.3f}" for t in self.time_axis])
         return pd.concat([pd.DataFrame(meta),samples],axis=1)
 
@@ -258,7 +258,7 @@ class CombinedResult(_PlumeStats):
             normalized_matrix, centered_matrix = df_matrix, np.full_like(df_matrix, np.nan)
         else:
             centered_matrix = df_matrix
-            normalized_matrix = zero_baseline_start(normalize_area(df_matrix,dt,channel_name=channel))
+            normalized_matrix = normalize_plumes(df_matrix, dt, channel_name=channel)
 
         return cls(normalized_matrix=normalized_matrix,
                    centered_matrix=centered_matrix,

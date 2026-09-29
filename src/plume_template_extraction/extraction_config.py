@@ -117,7 +117,7 @@ class ExtractionConfig:
     drop_co2_invalid_poll: bool = False
 
     min_gap: np.timedelta64 = np.timedelta64(30, "s")
-    window_before: np.timedelta64 = np.timedelta64(10, "s")
+    window_before: np.timedelta64 = np.timedelta64(15, "s")
     window_after: np.timedelta64 = np.timedelta64(25, "s")
 
     peak_search_after: np.timedelta64 = np.timedelta64(15, "s")
@@ -129,7 +129,7 @@ class ExtractionConfig:
     # slower plume behaviour it may not fit in this window and if it fits does it hold the same information like a
     # faster plume with more padding around the start and "end" of the plume ? Maybe a gradient based approach like
     # in TUG-PDA is better but then the algorithm has to deal with varying window sizes ?
-    window_before_peak: np.timedelta64 = np.timedelta64(5, "s")
+    window_before_peak: np.timedelta64 = np.timedelta64(10, "s")
     window_after_peak: np.timedelta64 = np.timedelta64(20, "s")
 
 

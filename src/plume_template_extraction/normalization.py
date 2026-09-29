@@ -31,3 +31,14 @@ def normalize_area(centered_matrix: np.ndarray, dt: float, channel_name = "", da
         raise ValueError(f"{channel_name} on {day} : Zero Emission area detected")
 
     return centered_matrix / areas
+
+def positive_area_mask(centered_matrix: np.ndarray, dt: float) -> np.ndarray:
+    """True for every plume whose area after the baseline offset (zero_baseline_start) is > 0.
+
+    Exactly the area normalize_plumes divides by -> plumes with False cannot be normalized.
+    """
+    return np.sum(zero_baseline_start(centered_matrix), axis=1) * dt > 0
+
+def normalize_plumes(centered_matrix: np.ndarray, dt: float, channel_name: str = "", day: str = "") -> np.ndarray:
+    # To keep the order consistent
+    return normalize_area(zero_baseline_start(centered_matrix), dt, channel_name=channel_name, day=day)
