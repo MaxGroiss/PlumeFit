@@ -11,10 +11,6 @@ All QA Checks happen in extraction_quality.py
 Extraction Pipeline:
 Expects One MeasurementRegistry and One Extraction Config per Channel -> Extraction and QA Checks are performed using
 the defined Config Parameters -> ExtractionResult.
-
-Disclaimer:
-Defaults are mainly derived from observing pipeline behavior on measurement data from the CARES_Milan Campaign 2021
-QA Parameters have to be tuned for the given sensors to reduce/avoid unexpected extraction behavior.
 """
 
 from dataclasses import dataclass, field
@@ -76,6 +72,8 @@ class ChannelQAConfig:
     min_peak_above_bg: float | None = None
     peak_above_bg_sigma: float = 3.0
 
+    min_effective_width: np.timedelta64 = np.timedelta64(1500, "ms")
+
     min_prominence_ratio: float = 0.3
     min_prominence_floor: float | None = None
     prominence_floor_sigma: float = 3.0
@@ -132,6 +130,8 @@ class ExtractionConfig:
     window_before_peak: np.timedelta64 = np.timedelta64(10, "s")
     window_after_peak: np.timedelta64 = np.timedelta64(20, "s")
 
+    # This
+    baseline_anchor: np.timedelta64 = np.timedelta64(1500, "ms")
 
     bg_percentile: float = 2.0
     bg_rolling_window: np.timedelta64 = np.timedelta64(100, "s")

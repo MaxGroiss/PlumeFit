@@ -118,4 +118,4 @@ if __name__ == "__main__":
         cr.to_csv(path=export_path / f"{ch}.csv", normalized=False)
 
     # Save QA-Statistik of Export
-    #qa = get_qa_statistics(batch, Path(__file__).parent / "result" / "qa_summary.csv")
+    qa = get_qa_statistics(batch, Path(__file__).parent / "result" / "qa_summary.csv")

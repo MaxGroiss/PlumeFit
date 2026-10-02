@@ -24,7 +24,7 @@ import pandas as pd
 from numpy.matrixlib.defmatrix import matrix
 
 from src.plume_template_extraction.extraction_config import ExtractionConfig
-from src.plume_template_extraction.normalization import zero_baseline_start, normalize_area, normalize_plumes
+from src.plume_template_extraction.normalization import normalize_plumes, pooled_mean_shape, pooled_mean_se
 from src.plume_template_extraction.plume_status import PlumeStatus
 
 
@@ -48,14 +48,14 @@ class _PlumeStats:
         return (np.arange(n_samples) - self.peak_index) * self.dt
 
     @property
-    def std_envelope(self) -> np.ndarray:
-        """Standard deviation of the normalized plume matrix (axis=0)."""
-        return np.std(self.normalized_matrix, axis=0)
+    def se_mean_envelope(self) -> np.ndarray:
+        """Standard error of the pooled mean"""
+        return pooled_mean_se(self.normalized_matrix, self.areas, self.dt)
 
     @property
-    def std_mean_envelope(self) -> np.ndarray:
-        """Standard error of the mean (σ/√n)."""
-        return self.std_envelope / np.sqrt(self.n_valid)
+    def mean_shape(self) -> np.ndarray:
+        """Area-weighted (pooled) mean shape, unit area."""
+        return pooled_mean_shape(self.normalized_matrix, self.areas, self.dt)
 
 
 @dataclass(frozen=True)
@@ -85,6 +85,7 @@ class ExtractionResult(_PlumeStats):
     channel: str
     config: ExtractionConfig
 
+    areas: np.ndarray
     normalized_matrix: np.ndarray
     centered_matrix: np.ndarray
 
@@ -100,10 +101,6 @@ class ExtractionResult(_PlumeStats):
     pollutant_offsets: np.ndarray | None = None
     trigger_delays: np.ndarray | None = None
 
-    @property
-    def mean_shape(self) -> np.ndarray:
-        """Mean Shape of the normalized plume matrix (axis=0)."""
-        return np.mean(self.normalized_matrix, axis=0)
 
 
 @dataclass(frozen=True)
@@ -182,7 +179,7 @@ class CombinedResult(_PlumeStats):
         trigger_delays: (np.ndarray | None) CO2 peak delay after the light-barrier trigger in samples
                         (CO2 channels only)
     """
-
+    areas: np.ndarray
     normalized_matrix: np.ndarray
     centered_matrix: np.ndarray
     peak_index: int
@@ -192,15 +189,6 @@ class CombinedResult(_PlumeStats):
     source_days: np.ndarray
     pollutant_offsets: np.ndarray | None = None
     trigger_delays: np.ndarray | None = None
-
-    @property
-    def mean_shape(self) -> np.ndarray:
-        """Mean of the normalized plume matrix (axis=0)."""
-        # The Mean Shape is re normalized to guarantee a unit-area
-        mean = np.mean(self.normalized_matrix, axis=0)
-        nm = mean / (np.sum(mean) * self.dt)
-
-        return nm
 
     def to_dataframe(self, normalized: bool = True) -> pd.DataFrame:
         """Converts the CombinedResult into a Pandas DataFrame.
@@ -213,6 +201,7 @@ class CombinedResult(_PlumeStats):
         meta = {"channel": self.channel,
                 "source_day": self.source_days.astype(str),
                 "pass_index": self.pass_indices.astype(int),
+                "area": self.areas,
                 "normalized": normalized}
         if self.trigger_delays is not None:
             meta["trigger_delay"] = self.trigger_delays
@@ -229,7 +218,7 @@ class CombinedResult(_PlumeStats):
         self.to_dataframe(normalized).to_csv(path, index=False, float_format="%.6g")
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, dt_rounding: int = 6) -> CombinedResult:
+    def from_dataframe(cls, df: pd.DataFrame, dt_rounding: int = 6, baseline_anchor_s = 1.5) -> CombinedResult:
         """Build a CombinedResult from a Pandas DataFrame.
         The format has to be the one created by to_dataframe.
         If the read dataframe only contains the normalized plume matrix, the centered matrix cannot be recovered and
@@ -254,13 +243,16 @@ class CombinedResult(_PlumeStats):
         channel = str(df["channel"].iloc[0])
         # Read Matrix and if centered reconstruct the normalized matrix
         df_matrix = df[sample_columns].to_numpy(dtype=np.float64)
+        n_anchor = round(baseline_anchor_s / dt)
         if bool(df["normalized"].iloc[0]):
             normalized_matrix, centered_matrix = df_matrix, np.full_like(df_matrix, np.nan)
+            areas = df["area"].to_numpy(dtype=float)
         else:
             centered_matrix = df_matrix
-            normalized_matrix = normalize_plumes(df_matrix, dt, channel_name=channel)
+            normalized_matrix, areas = normalize_plumes(df_matrix, dt, n_anchor, channel_name=channel)
 
         return cls(normalized_matrix=normalized_matrix,
+                   areas=areas,
                    centered_matrix=centered_matrix,
                    peak_index=peak_index,
                    dt=dt,
@@ -277,7 +269,7 @@ class CombinedResult(_PlumeStats):
                 If the read dataframe only contains the normalized plume matrix, the centered matrix cannot be recovered and
                 therefore is filled wir NaN
                 """
-        return cls.from_dataframe(pd.read_csv(path, dtype={"source_day": str}))
+        return cls.from_dataframe(pd.read_csv(path, dtype={"source_day": str}),baseline_anchor_s= 1.5)
 
 
 
@@ -305,6 +297,7 @@ def combine_results(channel_results: list[ExtractionResult], dt_rounding: int = 
             raise ValueError(f"All results must share the same {name}, got {values}")
 
     normalized_matrix = np.vstack([r.normalized_matrix for r in channel_results])
+    areas = np.concatenate([r.areas for r in channel_results])
     centered_matrix = np.vstack([r.centered_matrix for r in channel_results])
     pass_indices = np.concatenate([r.pass_indices for r in channel_results])
     source_days = np.concatenate(
@@ -319,6 +312,7 @@ def combine_results(channel_results: list[ExtractionResult], dt_rounding: int = 
 
 
     return CombinedResult(
+        areas=areas,
         normalized_matrix=normalized_matrix,
         centered_matrix=centered_matrix,
         peak_index=channel_results[0].peak_index,

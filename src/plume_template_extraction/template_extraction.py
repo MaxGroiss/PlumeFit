@@ -14,8 +14,7 @@ from __future__ import annotations
 from collections import Counter
 import numpy as np
 
-from src.plume_template_extraction.normalization import normalize_area, zero_baseline_start, normalize_plumes, \
-    positive_area_mask
+from src.plume_template_extraction.normalization import  normalize_plumes, area_plausibility_check
 from src.shared_services.measurement_register import MeasurementRegister
 from src.plume_template_extraction.extraction_config import ChannelQAConfig, ExtractionConfig
 from src.plume_template_extraction.extraction_result import ExtractionResult, BatchResult
@@ -200,6 +199,8 @@ def extract_plumes(register: MeasurementRegister,
 
     co2_phys_run = config.as_samples(config.co2_qa.min_physical_run, dt)
 
+    n_anchor = config.as_samples(config.baseline_anchor, dt)
+
     # Finds isolated vehicle passes: Returns the indices of passes that are isolated by a minimum gap (int array)
     isolated_passes = find_isolated_passes(register.vehicle_pass_times, config.min_gap)
 
@@ -223,7 +224,9 @@ def extract_plumes(register: MeasurementRegister,
     # Resolve the noise-derived QA thresholds (min_peak_above_bg / min_prominence_floor = None)
     # The influence mask covers ALL vehicle passes, not only the isolated ones
     all_pass_idx = np.searchsorted(register.timestamps, register.vehicle_pass_times)
-    influenced = influence_mask(len(co2_data), all_pass_idx, window_before_lb, window_after_lb)
+    influenced = influence_mask(len(co2_data), all_pass_idx,
+                                max(window_before_lb, window_before_peak),
+                                peak_search_window + window_after_peak)
     # tail_len = tail of the peak centered window, needed for the tail calibration
     co2_qa = resolve_qa_thresholds(config.co2_qa, co2_data - co2_bg_series, influenced,
                                    tail_len=window_after_peak)
@@ -275,8 +278,10 @@ def extract_plumes(register: MeasurementRegister,
     poll_result = None
     co2_valid = statuses_final[valid_lbc_plumes_idx] == PlumeStatus.VALID
     area_ok = np.ones_like(co2_valid)  # out-of-bounds plumes are not VALID anyway
-    area_ok[co2_in_bounds] = positive_area_mask(co2_plumes - co2_bg_f[:, None], dt)
-    statuses_final[valid_lbc_plumes_idx[co2_valid & ~area_ok]] = PlumeStatus.NON_POSITIVE_AREA
+    co2_min_w = config.co2_qa.min_effective_width / np.timedelta64(1, "s")
+    area_ok[co2_in_bounds] = area_plausibility_check(co2_plumes - co2_bg_f[:, None], dt, n_anchor,
+                                                 window_before_peak, co2_min_w)
+    statuses_final[valid_lbc_plumes_idx[co2_valid & ~area_ok]] = PlumeStatus.NON_PLAUSIBLE_AREA
     co2_valid = co2_valid & area_ok
     # poll_channel is None => co2 only run
     if config.poll_channel is None:
@@ -323,15 +328,18 @@ def extract_plumes(register: MeasurementRegister,
 
         # poll_in_bounds is needed because cut_around_peak only returns the in bound plumes
         valid_poll_plumes = poll_plumes[combined_poll_mask[poll_in_bounds]] - poll_bg[combined_poll_mask][:, None]
-        poll_area_ok = positive_area_mask(valid_poll_plumes, dt)
+        poll_min_w = config.pollutant_qa.min_effective_width / np.timedelta64(1, "s")
+        poll_area_ok = area_plausibility_check(valid_poll_plumes, dt, n_anchor, window_before_peak, poll_min_w)
         bad = np.flatnonzero(combined_poll_mask)[~poll_area_ok]
-        poll_loc_status[bad] = PlumeStatus.NON_POSITIVE_AREA
+        poll_loc_status[bad] = PlumeStatus.NON_PLAUSIBLE_AREA
         combined_poll_mask[bad] = False
         valid_poll_plumes = valid_poll_plumes[poll_area_ok]
         # Building Pollutant Output
+        norm, areas = normalize_plumes(valid_poll_plumes, dt, n_anchor, channel_name=config.poll_channel, day=source_day)
         poll_result = ExtractionResult(
             channel=config.poll_channel, config=config,
-            normalized_matrix=normalize_plumes(valid_poll_plumes, dt, channel_name=config.poll_channel, day=source_day),
+            areas=areas,
+            normalized_matrix=norm,
             centered_matrix=valid_poll_plumes,
             peak_index=window_before_peak, dt=dt,
             pass_indices=valid_passes[valid_lbc_plumes_idx[combined_poll_mask]],
@@ -344,10 +352,11 @@ def extract_plumes(register: MeasurementRegister,
     # Building CO2 Output
     # in bounds still needed to not run into out of bounds errors
     valid_co2_plumes = co2_plumes[co2_out[co2_in_bounds]] - co2_bg_f[co2_out[co2_in_bounds]][:, None]
-
+    norm, areas = normalize_plumes(valid_co2_plumes, dt, n_anchor, channel_name=config.co2_channel, day=source_day)
     co2_result = ExtractionResult(
         channel=config.co2_channel, config=config,
-        normalized_matrix=normalize_plumes(valid_co2_plumes, dt, channel_name=config.co2_channel, day=source_day),
+        areas=areas,
+        normalized_matrix=norm,
         centered_matrix=valid_co2_plumes,
         peak_index=window_before_peak, dt=dt,
         pass_indices=valid_passes[valid_lbc_plumes_idx[co2_out]],

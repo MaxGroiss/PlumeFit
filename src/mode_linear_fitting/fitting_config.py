@@ -34,6 +34,7 @@ import numpy as np
 from scipy.special import erfcx
 
 from src.plume_template_extraction.extraction_result import CombinedResult
+from src.plume_template_extraction.normalization import pooled_mean_shape
 
 
 def emg(t: np.ndarray, mu: float, sigma: float, tau: float) -> np.ndarray:
@@ -82,11 +83,11 @@ class ShapeTemplate:
         :raises ValueError: If the mask selects no plumes
         """
         matrix = cr.normalized_matrix if mask is None else cr.normalized_matrix[mask]
+        areas = cr.areas if mask is None else cr.areas[mask]
         if matrix.shape[0] == 0:
             raise ValueError(f"mask selects no plumes for channel {cr.channel}")
         # The mean shape is re-normalized to guarantee a unit area
-        mean = np.mean(matrix, axis=0)
-        mean = mean / (np.sum(mean) * cr.dt)
+        mean = pooled_mean_shape(matrix, areas, cr.dt)
         provenance = f"empirical:{cr.channel}:{label + ':' if label else ''}n={matrix.shape[0]}"
         return cls(mean, cr.peak_index, provenance)
 

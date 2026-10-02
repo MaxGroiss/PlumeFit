@@ -1,44 +1,53 @@
 import numpy as np
 
 
-def zero_baseline_start(centered_normalized_matrix: np.ndarray, n_start: int = 3) -> np.ndarray:
-    """Shift each plume so its leading background sits at zero.
-
-    Subtracts a per-plume offset (median of the first n_start samples)
-    from the whole plume.
-
-    :param centered_normalized_matrix: (np.ndarray) Normalized plumes.
-    :param n_start: (int) Samples for offset calculation should be a small value.
-    :returns: (np.ndarray) Shifted plume matrix
-    """
-    offset = np.nanmedian(centered_normalized_matrix[:, :n_start], axis=1)
+def zero_baseline_start(centered_normalized_matrix: np.ndarray, n_anchor: int) -> np.ndarray:
+    """Shifts each plume so the mean of its first n_anchor samples sits at zero"""
+    offset = np.nanmean(centered_normalized_matrix[:, :n_anchor], axis=1)
     return centered_normalized_matrix - offset[:, None]
 
-
-def normalize_area(centered_matrix: np.ndarray, dt: float, channel_name = "", day = "" ) -> np.ndarray:
-    """Scale each plume so its integral (sum × dt) equals 1.
-
-
-    :param centered_matrix: (np.ndarray) Centered plumes.
-    :param dt: (float) Sampling interval in seconds.
-    :param day:
-    :param channel_name:
-    :returns: (np.ndarray) Area-normalized plume matrix.
-    :raises ValueError: If any plume has zero area.
+def area_plausibility_check(centered_matrix: np.ndarray, dt: float, n_anchor: int,
+                            peak_index: int, min_width_s: float) -> np.ndarray:
+    """Retruns true if the window area after the baseline shift is at least min_width_s * peak_height
+       This is introduced, because if the samples used for zeroing sit on a devaying tail of a neighbor they can
+       push the tail of the current plume below zero the net area of the plume goes near zero and the unit-area
+       normalization (Value of Sample / A Near Zero ) -> Peak "explodes".
     """
-    areas = (np.sum(centered_matrix, axis=1, keepdims=True) * dt)
+    z = zero_baseline_start(centered_matrix, n_anchor)
+    area = np.sum(z, axis=1)*dt
+    height = z[:, peak_index]
+    return (height > 0) & (area >= min_width_s * height)
+
+def normalize_plumes(centered_matrix: np.ndarray, dt: float, n_anchor: int,
+                     channel_name: str = "", day: str = "") -> tuple[np.ndarray, np.ndarray]:
+    """ Shifts the Baseline and normalizes to unit area"""
+    z = zero_baseline_start(centered_matrix, n_anchor)
+    areas = np.sum(z, axis=1)*dt
     if np.any(areas <= 0):
-        raise ValueError(f"{channel_name} on {day} : Zero Emission area detected")
+        raise ValueError(f"{channel_name} on {day}: non-positive emission area")
+    return z / areas[:, None], areas
 
-    return centered_matrix / areas
+def pooled_mean_shape(normalized_matrix: np.ndarray, areas: np.ndarray, dt: float) -> np.ndarray:
+    """Calculates the area weighted mean (sum of plumes / sum of areas)"""
+    mean = np.average(normalized_matrix, axis=0, weights=areas)
+    return mean / (np.sum(mean) * dt)
 
-def positive_area_mask(centered_matrix: np.ndarray, dt: float) -> np.ndarray:
-    """True for every plume whose area after the baseline offset (zero_baseline_start) is > 0.
-
-    Exactly the area normalize_plumes divides by -> plumes with False cannot be normalized.
-    """
-    return np.sum(zero_baseline_start(centered_matrix), axis=1) * dt > 0
-
-def normalize_plumes(centered_matrix: np.ndarray, dt: float, channel_name: str = "", day: str = "") -> np.ndarray:
-    # To keep the order consistent
-    return normalize_area(zero_baseline_start(centered_matrix), dt, channel_name=channel_name, day=day)
+def pooled_mean_se(normalized_matrix: np.ndarray, areas: np.ndarray, dt: float,
+                   ) -> np.ndarray:
+    """standard error of the pooled mean Gatz & Smith (1995) 10.1016/1352-2310(94)00210-C"""
+    n = areas.size
+    if n <= 1:
+        print(f" Warning ! Pooled mean standard error calculation on {n} passes. Expected at least n > 1")
+        return 0
+    w = areas[:, None]
+    w_b = np.mean(areas)
+    x_w = pooled_mean_shape(normalized_matrix, areas, dt)
+    wx_dev = w * normalized_matrix - w_b * x_w
+    w_dev = w - w_b
+    var = n / ((n - 1) * np.sum(areas) ** 2) * (
+            np.sum(wx_dev ** 2, axis=0)
+            - 2 * x_w * np.sum(w_dev * wx_dev, axis=0)
+            + x_w ** 2 * np.sum(w_dev ** 2, axis=0))
+    # Guarding against potentially negative var
+    se = np.sqrt(np.maximum(var,0))
+    return se

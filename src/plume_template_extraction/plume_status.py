@@ -16,7 +16,7 @@ class PlumeStatus(Enum):
         MULTIPLE_PEAKS: More than one prominent peak detected.
         TAIL_ANOMALY: Sustained re-rise in the tail region.
         WINDOW_EDGE: Cutout window exceeds the measurement data bounds.
-        NON_POSITIVE_AREA: Peak Area can't be normalized due to negative area.
+        NON_PLAUSIBLE_AREA: Peak Area can't be normalized due to negative area.
     """
 
     VALID = "valid"
@@ -25,4 +25,4 @@ class PlumeStatus(Enum):
     MULTIPLE_PEAKS = "multiple_peaks"
     TAIL_ANOMALY = "tail_anomaly"
     WINDOW_EDGE = "window_edge"
-    NON_POSITIVE_AREA = "non_positive_area"
+    NON_PLAUSIBLE_AREA = "non_plausible_area"

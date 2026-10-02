@@ -150,6 +150,10 @@ def assess_vectorized_lb_centered(plumes: np.ndarray, samples_before: int, peak_
 
     # Check for NO_PEAK
     statuses[peak_height < qa_config.min_peak_above_bg] = PlumeStatus.NO_PEAK
+    # Chek if peaks are positioned in the last samples of the window
+    at_edge = (rel_peak_idx == 0) | (rel_peak_idx == peak_search_window - 1)
+    statuses[at_edge] = PlumeStatus.NO_PEAK
+
 
     # Assign Null Mask overrides all other statuses
     statuses[null_mask] = PlumeStatus.NULL_DATA
@@ -264,7 +268,7 @@ def assess_pollutant_peak_centered(windows: np.ndarray, backgrounds: np.ndarray,
     statuses[null_data_mask(windows, qa_config.min_physical_value, min_physical_run)] = PlumeStatus.NULL_DATA
     valid = statuses == PlumeStatus.VALID
 
-    # AI-Assisted: <Opus 5> ; (Review, Filter Implementation)
+    # AI-Assisted: <Opus 5> ; (Review Filter Implementation)
 
     # The Pollutant Channel SNR is lower than the CO2 Channel SNR therefor it is smoothened
     # This Filter was chosen because of its capability of removing noise while preserving features (in bounds)

@@ -88,6 +88,7 @@ def create_group_csvs(groups: dict[str, dict], extraction_dir: Path, mapping_csv
 # Filter Definition
 # ----------------------------------------------------------------
 GROUPS = {
+    "All_included": {},
     # Exhaust Side
     # One Dict Entry creates one CSV for every channel
     # ----
@@ -106,7 +107,9 @@ GROUPS = {
     **{f"Pkw_{fuel}_Euro{n}": {"vehicle_category": "Passenger cars", "fuel_group": fuel, "euro_stage": (n, n)}
        for fuel in ("Petrol", "Diesel") for n in (2, 3, 4, 5, 6)},
 }
-
+ALL_INCLUDED = {
+    "All_included":{}
+}
 
 if __name__ == "__main__":
     summary = create_group_csvs(GROUPS, EXTRACTION_INPUT_DIR, VEHICLE_MAPPING, OUTPUT_DIRECTORY, min_n=0)

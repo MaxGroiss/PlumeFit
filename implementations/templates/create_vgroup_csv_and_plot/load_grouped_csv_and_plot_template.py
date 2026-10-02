@@ -1,10 +1,10 @@
 # This file contains code created with AI assistance;
 # unless stated otherwise, Anthropic models were used
 # Individual uses are marked by inline comments stating purpose and extent: AI-Assisted: <Model> ; (Cause)
-#  AI-Assisted: <OPUS 5> ; (Individual Passes in Template Plot limited for svg performance -> seed so they are chosen
-#  randomly -> This only applies visually the template contains all passes)
+
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -34,13 +34,28 @@ DISPLAY = {
 }
 # Y_Label for the PLot if the template is used
 Y_LABEL = tp.label("s", r"s^{-1}", name="normierte Vorlage")
-# Plots a Template with individual passes as semitrans lines and template full opacity
-def _plot_single(ax, cr: CombinedResult, max_plumes: int | None, seed: int) -> None:
+# Spread display around the template: individual passes ("passes") or standard error band ("sem")
+Spread = Literal["passes", "sem"]
+# Plots a Template with individual passes as semitrans lines (or SEM band) and template full opacity
+def _plot_single(ax, cr: CombinedResult, max_plumes: int | None, seed: int, max_ratio: float | None = 3.0,
+                 spread: Spread = "passes") -> None:
+    #  AI-Assisted: <OPUS 5> ; (Individual Passes in Template Plot limited for svg performance -> seed so they are chosen
+    #  randomly -> This only applies visually the template contains all passes)
     t = cr.time_axis
-    rows = cr.normalized_matrix
-    if max_plumes is not None and rows.shape[0] > max_plumes:
-        rows = rows[np.random.default_rng(seed).choice(rows.shape[0], max_plumes, replace=False)]
-    ax.plot(t, rows.T, color=tp.C["context"], lw=0.3, alpha=0.3, rasterized=True)
+    if spread == "passes":
+        rows = cr.normalized_matrix
+        # Heigh single plumes scale the plot to much
+        if max_ratio is not None:
+            keep = np.abs(rows).max(axis=1) <= max_ratio * cr.mean_shape.max()
+            rows = rows[keep]
+        if max_plumes is not None and rows.shape[0] > max_plumes:
+            rows = rows[np.random.default_rng(seed).choice(rows.shape[0], max_plumes, replace=False)]
+        ax.plot(t, rows.T, color=tp.C["context"], lw=0.3, alpha=0.3, rasterized=True)
+    elif spread == "sem":
+        ax.fill_between(t, cr.mean_shape - cr.se_mean_envelope, cr.mean_shape + cr.se_mean_envelope,
+                        color=tp.C["model"], alpha=0.25, lw=0, label="Standardfehler")
+    else:
+        raise ValueError(f"spread must be 'passes' or 'sem', got {spread!r}")
     ax.plot(t, cr.mean_shape, color=tp.C["model"], lw=1.2, label="Vorlage")
     ax.set_title(f"{DISPLAY.get(cr.channel, cr.channel)}, $n = {cr.n_valid}$")
     ax.set_xlabel(tp.label("t", "s"))
@@ -71,10 +86,10 @@ def filter_text(folder: Path) -> str:
 
 def plot_representative_templates(combined: dict[str, CombinedResult], co2_channel: str, poll_channel: str,
                                   name: str, group: str | None = None,
-                                  max_plumes: int | None = 500, seed: int = 0) -> None:
+                                  max_plumes: int | None = 500, seed: int = 0, spread: Spread = "passes") -> None:
     fig, axes = plt.subplots(1, 2, figsize=tp.figsize("single", aspect=0.45), sharex=True)
     for ax, ch in zip(axes, (co2_channel, poll_channel)):
-        _plot_single(ax, combined[ch], max_plumes, seed)
+        _plot_single(ax, combined[ch], max_plumes, seed, spread=spread)
     axes[0].set_ylabel(Y_LABEL)
     axes[0].legend(loc="upper right")
     tp.subplot_labels(axes)
@@ -83,13 +98,18 @@ def plot_representative_templates(combined: dict[str, CombinedResult], co2_chann
     tp.save(fig, name)
     plt.close(fig)
 
-def plot_group(folder: Path, show_group: bool = True) -> None:
-    """Representative template plot for every complete instrument pair of one group folder."""
+def plot_group(folder: Path, show_group: bool = True, spread: Spread = "passes") -> None:
+    """Representative template plot for every complete instrument pair of one group folder.
+
+    spread: "passes" = individual passes as thin lines, "sem" = shaded band = standard error of the mean
+    """
     combined = load_combined_from_folder(folder)
     group = f"{folder.name}: {filter_text(folder)}" if show_group else None
+    suffix = "" if spread == "passes" else f"_{spread}"
     for pair, (co2, poll) in PAIRS.items():
         if co2 in combined and poll in combined:
-            plot_representative_templates(combined, co2, poll, f"template_{folder.name}_{pair}", group)
+            plot_representative_templates(combined, co2, poll, f"template_{folder.name}_{pair}{suffix}", group,
+                                          spread=spread)
         else:
             print(f"  {folder.name}: pair {pair} not complete -> no plot")
 
@@ -101,7 +121,7 @@ def plot_group_comparison(group_names: list[str], pair: str, name: str,
     group_names: folder names in GROUP_DIRECTORY, e.g. ["Pkw_Exhaust_left", "Pkw_Exhaust_right"]
     pair:        key of PAIRS, e.g. "BCT1"
     labels:      optional legend names per group, e.g. {"Pkw_Exhaust_left": "Auspuff links"}
-    show_sem:    shaded band = standard error of the mean (sigma / sqrt(n))
+    show_sem:    shaded band = standard error of the mean
     """
     co2, poll = PAIRS[pair]
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
@@ -118,8 +138,8 @@ def plot_group_comparison(group_names: list[str], pair: str, name: str,
             cr = combined[ch]
             ax.plot(cr.time_axis, cr.mean_shape, color=color, lw=1.2, label=f"{label} ($n = {cr.n_valid}$)")
             if show_sem:
-                ax.fill_between(cr.time_axis, cr.mean_shape - cr.std_mean_envelope,
-                                cr.mean_shape + cr.std_mean_envelope, color=color, alpha=0.2, lw=0)
+                ax.fill_between(cr.time_axis, cr.mean_shape - cr.se_mean_envelope,
+                                cr.mean_shape + cr.se_mean_envelope, color=color, alpha=0.2, lw=0)
 
     for ax, ch in zip(axes, (co2, poll)):
         ax.set_title(DISPLAY.get(ch, ch))
@@ -146,13 +166,19 @@ COMPARISONS = {
 
 if __name__ == "__main__":
     # Creates Plots for all Groups in the Output folder
-    plot_output_dir = FIGURE_DIRECTORY / "comparisons"
+    plot_output_dir = FIGURE_DIRECTORY / "temps" / "sem"
 
     tp.setup(figures_dir=plot_output_dir, textwidth_mm=160)
     # -> Template Plot per Group and Channel
-    #for folder in sorted(p for p in GROUP_CSV_DIRECTORY.iterdir() if p.is_dir() and p != FIGURE_DIRECTORY):
-    #    plot_group(folder)
+    for folder in sorted(p for p in GROUP_CSV_DIRECTORY.iterdir() if p.is_dir() and p != FIGURE_DIRECTORY):
+        plot_group(folder, spread = "sem")
+        #plot_group(folder, spread="passes")
+    #Plot Single Folder
+    #SINGLE_FOLDER = GROUP_CSV_DIRECTORY / "Complete"
+    #plot_group(SINGLE_FOLDER)
     # -> Comp Plots
-    for comp, (groups, labels) in COMPARISONS.items():
-        for pair in PAIRS:
-            plot_group_comparison(groups, pair, f"compare_{comp}_{pair}", labels)
+    #plot_output_dir = FIGURE_DIRECTORY / "comps"
+    #tp.setup(figures_dir=plot_output_dir, textwidth_mm=160)
+    #for comp, (groups, labels) in COMPARISONS.items():
+    #    for pair in PAIRS:
+    #        plot_group_comparison(groups, pair, f"compare_{comp}_{pair}", labels)
