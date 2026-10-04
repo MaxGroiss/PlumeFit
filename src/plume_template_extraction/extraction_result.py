@@ -1,19 +1,18 @@
-"""This module contains the output structure of the template extraction pipeline.
+"""Output structures of the template extraction pipeline.
 
-- ExtractionResult bundles the results from one channel over one extraction day/segment
-- BatchResult is a helper class that holds a list of ExtractionResults derived in batch template extraction
-- CombinedResult bundles Extractions Results from one channel over x Days in one Object
+ExtractionResult: plumes of one channel from one segment (one extract_plumes call).
+BatchResult: all ExtractionResults of a run_batch call.
+CombinedResult: plumes of one channel stacked over all segments, the input for templates.
 
-Extraction Pipeline:
-template_extraction_batch(loops: template_extraction -> One Channel One Day -> ExtractionResult) -> BatchResult
--> Get Data for one Channel of batch days -> BatchResult.combined_by_channel(does: grouped_by_channel + combine_results)
--> Returns a dict with key = Channel Name, Value = CombinedResult
-
+Flow: run_batch -> BatchResult -> combined_by_channel() -> {channel: CombinedResult}
+-> optional CSV export with key (source_day, pass_index) for the vehicle mapping
+-> ShapeTemplate.from_combined (mode_linear_fitting).
 """
-# This file contains code created with AI assistance;
+
+# This file contains code/docs created with AI assistance;
 # unless stated otherwise, Anthropic models were used
 # Individual uses are marked by inline comments stating purpose/extent: AI-Assisted: <Model> ; (Cause)
-# AI-Assisted: <Opus 5> ; (Catch potential dimension/value errors and guard them with named raises)
+# AI-Assisted: <Opus 5> ; (Assistance with Docstring writing)
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -21,7 +20,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from numpy.matrixlib.defmatrix import matrix
 
 from src.plume_template_extraction.extraction_config import ExtractionConfig
 from src.plume_template_extraction.normalization import normalize_plumes, pooled_mean_shape, pooled_mean_se
@@ -30,56 +28,57 @@ from src.plume_template_extraction.plume_status import PlumeStatus
 
 # AI-Assisted: <Fable 5> ; (Deduplicate Properties by using a Property only Mixin)
 class _PlumeStats:
-    """Shared statistics over the normalized plume matrix.
+    """Statistics shared by ExtractionResult and CombinedResult.
 
-    Property-only mixin for the result containers — expects the inheriting dataclass
-    to provide normalized_matrix, peak_index and dt.
+    Property-only mixin, the inheriting dataclass provides normalized_matrix, areas,
+    peak_index and dt.
     """
 
     @property
     def n_valid(self) -> int:
-        """Number of plumes in the final normalized matrix."""
+        """Number of plumes in the result."""
         return self.normalized_matrix.shape[0]
 
     @property
     def time_axis(self) -> np.ndarray:
-        """Relative time axis in seconds, peak at t = 0."""
+        """Time relative to the peak in s, peak at t = 0."""
         n_samples = self.normalized_matrix.shape[1]
         return (np.arange(n_samples) - self.peak_index) * self.dt
 
     @property
     def se_mean_envelope(self) -> np.ndarray:
-        """Standard error of the pooled mean"""
+        """Standard error of the pooled mean shape per sample"""
         return pooled_mean_se(self.normalized_matrix, self.areas, self.dt)
 
     @property
     def mean_shape(self) -> np.ndarray:
-        """Area-weighted (pooled) mean shape, unit area."""
+        """Area-weighted (pooled) mean shape with unit area, the template of all plumes."""
         return pooled_mean_shape(self.normalized_matrix, self.areas, self.dt)
 
 
 @dataclass(frozen=True)
 class ExtractionResult(_PlumeStats):
-    """Extraction result of ONE channel for ONE measurement day.
+    """Extracted plumes of one channel from one segment.
 
-    Per plume arrays are row aligned by passes in the same order as pass_indices.
-    Meaning row i of the plume array belongs to the pass_indices[i] vehicle.
+    All per-plume arrays are row aligned: row i belongs to the pass pass_indices[i].
 
     Attributes:
-        channel: (str) Extracted channel
-        config: (ExtractionConfig) Config leading to this result
-        normalized_matrix: (np.ndarray) Plumes normalized to A = 1 centered around the peak
-        centered_matrix: (np.ndarray) Plumes centered around the peak
-        peak_index: (int) Peak column in plume matrix
-        dt: (float) Sampling interval in seconds
-        pass_indices: (np.ndarray) Light-barrier pass index per plume row (vehicle link within source_day)
-        source_day: (str) Measurement day the plumes were extracted from
-        n_isolated: (int) Number of isolated passes before QA
-        qa_counts: (dict[PlumeStatus, int]) Number of plumes per QA status
-        pollutant_offsets: (np.ndarray | None) Offset (sensor delay) of the pollutant peak relative to the
-                           associated co2 peak in samples (pollutant channels only)
-        trigger_delays: (np.ndarray | None) CO2 peak delay after the light-barrier trigger in samples
-                        (CO2 channels only)
+        channel: Extracted channel.
+        config: Config that produced this result.
+        areas: Plume area A_i in channel unit · s, one per plume.
+        normalized_matrix: Unit-area plumes s_i, peak-centered, one per row.
+        centered_matrix: Background-subtracted plumes before zeroing and
+            normalization, peak-centered, one per row.
+        peak_index: Column of the peak.
+        dt: Sampling interval in s.
+        pass_indices: Light barrier pass index per plume, unique within source_day.
+        source_day: Segment date, see MeasurementRegister.source_day.
+        n_isolated: Number of isolated passes before QA.
+        qa_counts: Number of isolated passes per PlumeStatus.
+        pollutant_offsets: Pollutant only. Pollutant peak relative to the CO₂ peak
+            in samples (sensor delay). None for CO₂.
+        trigger_delays: CO₂ only. CO₂ peak relative to the light barrier trigger
+            in samples. None for pollutants.
     """
 
     channel: str
@@ -105,27 +104,27 @@ class ExtractionResult(_PlumeStats):
 
 @dataclass(frozen=True)
 class BatchResult:
-    """Container class for batch extractions
-    Gathers all ExtractionResults of a batch run in a list
-
-    Calling:
-        - grouped_by_channel: -> (dict) channel_name: list[ExtractionResult]
-        - combined_by_channel: -> (dict) channel_name: CombinedResult
+    """All ExtractionResults of one run_batch call.
 
     Attributes:
-        results: (list[ExtractionResult]) One ExtractionResult per day and channel
-
+        results: One ExtractionResult per segment and channel.
     """
 
     results: list[ExtractionResult]
 
     def grouped_by_channel(self) -> dict[str, list[ExtractionResult]]:
-        """ Returns a dict with key = channel and value = list of results for that channel per day
+        """Group the results by channel, one result per segment.
 
-        This method automatically catches the case that one co2 channel is used as reference for
-        multiple pollutant channels. Combining all results blindly would duplicate this co2 channel.
+        A CO₂ channel that serves as reference for several pollutant configs appears
+        once per config. These duplicates are dropped, so combining does not stack the
+        same CO₂ plumes twice.
 
-        :return: dict with key = channel and value = list of results for that channel per day
+        Returns:
+            {channel: [result per segment]}.
+
+        Raises:
+            ValueError: If two results of the same channel and segment selected
+                different plumes (e.g. configs with different drop_co2_invalid_poll).
         """
         grouped: dict[str, dict[str, ExtractionResult]] = {}
         for r in self.results:
@@ -145,39 +144,37 @@ class BatchResult:
         return {ch: list(per_day.values()) for ch, per_day in grouped.items()}
 
     def combined_by_channel(self) -> dict[str, CombinedResult]:
-        """Combines the per-day results of every channel into one CombinedResult.
+        """Combine the per-segment results of every channel.
 
-        Convenience wrapper around :func:`grouped_by_channel` + :func:`combine_results`,
-        use grouped_by_channel directly if the per-day results are needed.
+        Shortcut for grouped_by_channel + combine_results. Use grouped_by_channel if
+        the per-segment results are needed.
 
-        :return: dict with key = channel and value = CombinedResult over all days
+        Returns:
+            {channel: CombinedResult over all segments}.
         """
         return {ch: combine_results(res) for ch, res in self.grouped_by_channel().items()}
 
 
 @dataclass(frozen=True)
 class CombinedResult(_PlumeStats):
-    """Cross-day combination of the ExtractionResults of ONE channel.
+    """Plumes of one channel stacked over several segments.
 
-    All per-plume arrays are row-aligned: row i of the matrices belongs to pass_indices[i]
-    on source_days[i]. Individual plumes are kept (not averaged) so they stay filterable
-    by vehicle, e.g. for subgroup means per vehicle class.
-
+    Individual plumes are kept, not averaged, so templates can be built for any
+    subgroup of vehicles (see ShapeTemplate.from_combined with a mask). All per-plume
+    arrays are row aligned: row i belongs to pass_indices[i] on source_days[i].
 
     Attributes:
-        channel: (str) Combined channel
-        normalized_matrix: (np.ndarray) Stacked Plumes normalized to A = 1 centered around the peak
-        centered_matrix: (np.ndarray) Stacked Plumes centered around the peak
-        peak_index: (int) Peak column in plume matrix
-        dt: (float) Sampling interval in seconds
-
-        pass_indices: (np.ndarray) Light-barrier pass index per plume row only per day unique
-        source_days: (np.ndarray) Measurement day per plume row (together with pass_indices the vehicle key)
-
-        pollutant_offsets: (np.ndarray | None) Offset (sensor delay) of the pollutant peak relative to the
-                           associated co2 peak in samples (pollutant channels only)
-        trigger_delays: (np.ndarray | None) CO2 peak delay after the light-barrier trigger in samples
-                        (CO2 channels only)
+        areas: Plume area A_i in channel unit · s.
+        normalized_matrix: Unit-area plumes s_i, one per row.
+        centered_matrix: Background-subtracted plumes before zeroing and
+            normalization. NaN if the result was read from a normalized CSV.
+        peak_index: Column of the peak.
+        dt: Sampling interval in s.
+        channel: Channel name.
+        pass_indices: Light barrier pass index per plume, unique only within a day.
+        source_days: Segment date per plume; (source_day, pass_index) identifies a vehicle.
+        pollutant_offsets: Pollutant only, see ExtractionResult.
+        trigger_delays: CO₂ only, see ExtractionResult.
     """
     areas: np.ndarray
     normalized_matrix: np.ndarray
@@ -190,12 +187,20 @@ class CombinedResult(_PlumeStats):
     pollutant_offsets: np.ndarray | None = None
     trigger_delays: np.ndarray | None = None
 
-    def to_dataframe(self, normalized: bool = True) -> pd.DataFrame:
-        """Converts the CombinedResult into a Pandas DataFrame.
-        The Plume samples are per column with header names as time stamp around the peak
-        :param normalized: (bool) Export the centered or normalized plume matrix
-                            The normalized matrix can be reconstructed from the centered one
-        :return: pd.DataFrame
+    def to_dataframe(self, normalized: bool = False) -> pd.DataFrame:
+        """Convert to a DataFrame with one row per plume.
+
+        Metadata columns first (channel, source_day, pass_index, area, normalized,
+        trigger_delay / pollutant_offset), then one column per sample named
+        "t_<time relative to the peak in s>".
+
+        Args:
+            normalized: Export the normalized (True) or the centered plumes (False).
+                The normalized plumes can be rebuilt from the centered ones, not vice
+                versa. Defaults to False.
+
+        Returns:
+            The plume table.
         """
         attach_matrix = self.normalized_matrix if normalized else self.centered_matrix
         meta = {"channel": self.channel,
@@ -211,18 +216,37 @@ class CombinedResult(_PlumeStats):
         return pd.concat([pd.DataFrame(meta),samples],axis=1)
 
 
-    def to_csv(self, path: Path, normalized: bool = True) -> None:
-        """Converts the CombinedResult into a Pandas DataFrame fia to_dataframe and saves it as a .csv at path"""
+    def to_csv(self, path: Path, normalized: bool = False) -> None:
+        """Write to_dataframe as CSV.
+
+        Args:
+            path: Target file.
+            normalized: See to_dataframe.
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.to_dataframe(normalized).to_csv(path, index=False, float_format="%.6g")
 
     @classmethod
     def from_dataframe(cls, df: pd.DataFrame, dt_rounding: int = 6, baseline_anchor_s = 1.5) -> CombinedResult:
-        """Build a CombinedResult from a Pandas DataFrame.
-        The format has to be the one created by to_dataframe.
-        If the read dataframe only contains the normalized plume matrix, the centered matrix cannot be recovered and
-        therefore is filled wir NaN
+        """Rebuild a CombinedResult from a DataFrame in the to_dataframe format.
+
+        From a normalized table the centered plumes cannot be recovered and are NaN.
+        From a centered table the normalized plumes are rebuilt with normalize_plumes.
+
+        Args:
+            df: Plume table, see to_dataframe. May be filtered to a vehicle subgroup.
+            dt_rounding: Decimals dt is rounded to, absorbs float noise in the column names.
+            baseline_anchor_s: Zeroing duration in s, for rebuilding normalized plumes must match the extraction config.
+
+        Returns:
+            The rebuilt result.
+
+        Raises:
+            ValueError: If the table is empty, the time axis is not equidistant with
+                t = 0 at the peak, or channel / normalized are mixed.
+
+        TODO: Hardcoded Parameters like baseline_anchor should be included in the from_dataframe / to_dataframe chain
         """
         if df.empty:
             raise ValueError("Empty dataframe")
@@ -231,7 +255,7 @@ class CombinedResult(_PlumeStats):
         # Sample times start at character 3 in header
         times = sample_columns.str[2:].astype(float).to_numpy()
         dt = round(float(np.median(np.diff(times))), dt_rounding)
-        # Peak should be at 0 argmin is more robust than a == 0
+        # The peak column is the one closest to t = 0 (robust against float formatting)
         peak_index = int(np.argmin(np.abs(times)))
         # AI-Assisted: <Opus 5> ; (Catch not equidistant time axis with peak not at 0)
         if not np.allclose(np.diff(times), dt) or not np.isclose(times[peak_index], 0.0):
@@ -264,23 +288,32 @@ class CombinedResult(_PlumeStats):
 
     @classmethod
     def from_csv(cls, path: Path) -> CombinedResult:
-        """Build a CombinedResult from a csv.
-                The format has to be the one created by to_dataframe.
-                If the read dataframe only contains the normalized plume matrix, the centered matrix cannot be recovered and
-                therefore is filled wir NaN
-                """
+        """Read a CSV written by to_csv, see from_dataframe.
+
+        Args:
+            path: CSV file.
+
+        Returns:
+            The rebuilt result.
+        """
         return cls.from_dataframe(pd.read_csv(path, dtype={"source_day": str}),baseline_anchor_s= 1.5)
 
 
 
 def combine_results(channel_results: list[ExtractionResult], dt_rounding: int = 6) -> CombinedResult:
-    """Combines per-day ExtractionResults into a single Matrix.
+    """Stack the per-segment results of one channel into one CombinedResult.
 
-    It is assumed that all extractions have the same window properties ("Verbally" enforced in ExtractionConfig).
+    Args:
+        channel_results: Results of one channel, one per segment.
+        dt_rounding: Decimals dt is rounded to before comparing segments.
 
-    :param channel_results: Per-day ExtractionResults from one channel
-    :param dt_rounding: All ExtractionResults must have the same dt, to avoid float error dt is rounded
-    :return: CombinedResult with stacked normalized and centered matrices and concatenated metadata
+
+    Returns:
+        Stacked plumes and metadata, in the order of channel_results.
+
+    Raises:
+        ValueError: If the list is empty or the results differ in channel, dt, peak
+            column or window width (they could not be stacked).
     """
 
     # AI-Assisted: <Opus 5> ; (Catching Value Consistency errors)
@@ -303,13 +336,11 @@ def combine_results(channel_results: list[ExtractionResult], dt_rounding: int = 
     source_days = np.concatenate(
         [np.full(r.normalized_matrix.shape[0], r.source_day) for r in channel_results]
     )
+    # CO₂ results carry no pollutant offsets, pollutant results no trigger delays
     offsets = [r.pollutant_offsets for r in channel_results]
-    # None check for Co2 Results
     pollutant_offset = None if any(o is None for o in offsets) else np.concatenate(offsets)
     delays = [r.trigger_delays for r in channel_results]
-    # None check for pollutant results
     trigger_delays = None if any(d is None for d in delays) else np.concatenate(delays)
-
 
     return CombinedResult(
         areas=areas,

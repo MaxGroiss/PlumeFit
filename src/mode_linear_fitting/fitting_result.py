@@ -1,18 +1,16 @@
-"""Result structures of the Mode L fitting pipeline, from a single segment fit up to a full day.
+"""Result structures of the Mode L fitting, from one segment fit up to a whole day.
 
-Hierarchy (inside out):
-    ModeLFitResult  One BVLS fit of a segment: amplitudes, baseline coefficients and
-                    diagnostics (standard errors, SSE, condition number, model signal)
-    PassAmplitude   The fit result mapped back to ONE vehicle pass; members of a merged
-                    (non-separable) group share amplitude, SE and detection flag
-    SegmentRecord   All PassAmplitudes of one segment plus baseline mode and fit diagnostics
-    DayFitResult    All SegmentRecords of one day and channel; pass_amplitudes flattens
-                    them into {pass_id: PassAmplitude}
-
+From inside out:
+    ModeLFitResult: One BVLS fit: amplitudes, baseline coefficients, diagnostics.
+    PassAmplitude: The fit result of one vehicle pass. Members of a merged group share
+        amplitude, SE and detection flag.
+    SegmentRecord: All PassAmplitudes of one segment plus baseline mode and diagnostics.
+    DayFitResult: All SegmentRecords of one measurement segment and channel.
 """
-# This file contains code created with AI assistance;
+# This file contains code/docs created with AI assistance;
 # unless stated otherwise, Anthropic models were used
 # Individual uses are marked by inline comments stating purpose and extent: AI-Assisted: <Model> ; (Cause)
+# AI-Assisted: <Opus 5> ; (Assistance with Docstring writing)
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -23,18 +21,19 @@ from src.mode_linear_fitting.fitting_config import Segment
 
 @dataclass(frozen=True)
 class PassAmplitude:
-    """Fit result per vehicle pass.
+    """Fit result of one vehicle pass.
 
     Attributes:
-        pass_id: (int) ID of the vehicle pass
-        amplitude: (float) Fitted amplitude, equals the area under the plume
-        group: (tuple[int, ...]) pass_ids of contributing passes that were considered non-splittable
-               (single-pass groups included)
-        tail_degenerate: (bool) Last group of a segment without right anchor (e.g. end of day)
-                         -> amplitude unreliable
-        shift: (int) Position correction through refine in samples
-        se: (float) Standard error of the amplitude (shared by all members of a merged group)
-        detected: (bool) amplitude >= detect_sigma * se
+        pass_id: Index into the peak_positions passed to fit_day.
+        amplitude: Fitted plume area a_j in channel unit · s. For a merged group this
+            is the total area of the whole group, repeated for every member.
+        group: pass_ids of all passes sharing this column (just (pass_id,) if not merged).
+        tail_degenerate: True for the last group of a segment without right anchor run
+            (e.g. end of the measurement): part of the template lies outside the
+            segment, the amplitude is extrapolated.
+        shift: Position correction τ_j − τ_j_initial by the refinement in samples.
+        se: Standard error of the amplitude in channel unit · s (shared within a group).
+        detected: True if amplitude ≥ detect_sigma · se.
     """
 
     pass_id: int
@@ -47,18 +46,17 @@ class PassAmplitude:
 
 @dataclass(frozen=True)
 class ModeLFitResult:
-    """Result of one Mode L segment fit.
+    """Result of one BVLS fit of a segment.
 
     Attributes:
-        amplitudes: (np.ndarray) Fitted amplitude per column, equals the area under the plume in (signal unit)*s.
-        baseline_coeffs: (np.ndarray) The fitted baseline coefficients (empty / const / linear)
-        residual_rms: (float) RMS of the fit residual over the valid segment samples
-        condition_number: (float) Condition number of the design matrix (collinearity diagnostic)
-        amplitudes_se: (np.ndarray) Standard error per amplitude (nan if with_se=False)
-        sse: (float) Sum of squared residuals
-        dof: (int) Degrees of freedom (valid samples - columns)
-        model: (np.ndarray) Fitted model over the whole segment (A @ x, incl. baseline columns)
-               for plotting / diagnostics
+        amplitudes: Amplitude per template column = plume area in channel unit · s.
+        baseline_coeffs: Baseline coefficients β (empty, [offset] or [offset, slope]).
+        residual_rms: RMS of the residual over the valid samples.
+        condition_number: Condition number of the design matrix (collinearity diagnostic).
+        amplitudes_se: Standard error per amplitude, NaN if computed with with_se=False.
+        sse: Sum of squared residuals.
+        dof: Degrees of freedom n − p (valid samples minus columns).
+        model: Fitted signal A · [a, β] over the whole segment, for plots.
     """
 
     amplitudes: np.ndarray
@@ -74,18 +72,19 @@ class ModeLFitResult:
 
 @dataclass(frozen=True)
 class SegmentRecord:
-    """Contains information about the fit of a segment.
+    """Fit outcome of one segment.
 
     Attributes:
-        segment: (Segment) The fitted segment
-        baseline_mode: (str) Baseline mode used: anchored_fixed | fitted_const | fitted_linear | failed
-        baseline_coeffs: (tuple[float, ...]) The fitted baseline coefficients
-        n_anchor: (int) Number of anchor samples in the segment
-        condition_number: (float) Condition number of the design matrix
-        residual_rms: (float) RMS of the fit residual
-        passes: (list[PassAmplitude]) Results per vehicle
-        model: (np.ndarray | None) Optional (fit_day(..., keep_signals=True)): fitted model over
-               the segment incl. baseline (for plotting)
+        segment: The fitted segment.
+        baseline_mode: "anchored_fixed", "fitted_const", "fitted_linear", or "failed"
+            if the segment could not be fitted (then passes is empty).
+        baseline_coeffs: Fitted baseline coefficients, empty for anchored_fixed.
+        n_anchor: Number of anchor samples in the segment.
+        condition_number: Condition number of the design matrix.
+        residual_rms: RMS of the fit residual.
+        passes: Result per pass of the segment.
+        model: Fitted signal including the fixed baseline, only with
+            fit_day(..., keep_signals=True).
     """
 
     segment: Segment
@@ -101,13 +100,13 @@ class SegmentRecord:
 
 @dataclass(frozen=True)
 class DayFitResult:
-    """Result of the day fitting for one channel.
+    """Fit result of one measurement segment and channel.
 
     Attributes:
-        channel: (str) The channel that was fitted
-        segments: (list[SegmentRecord]) One record per segment of the day
-        residual: (np.ndarray | None) Optional (fit_day(..., keep_signals=True)): the
-                  background-corrected, median-centred day signal the fits ran on
+        channel: Fitted channel.
+        segments: One record per segment.
+        residual: Background-subtracted, median-centered signal the fits ran on,
+            only with fit_day(..., keep_signals=True).
     """
 
     channel: str
@@ -116,5 +115,5 @@ class DayFitResult:
 
     @property
     def pass_amplitudes(self) -> dict[int, PassAmplitude]:
-        """Returns all pass amplitudes of the day fit keyed by pass_id."""
+        """All pass results keyed by pass_id. Passes of failed segments are missing."""
         return {p.pass_id: p for s in self.segments for p in s.passes}

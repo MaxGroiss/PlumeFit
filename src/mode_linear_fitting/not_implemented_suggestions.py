@@ -13,8 +13,8 @@
 # This optimization refines the filter approach already used in the pipeline code to further reduce bvls fits,
 # on co2 refinements it barely makes a diffrence as co2 plumes generally have a significant plume that enables the filter to
 # reduce the needed bvls checks on positions suspected to lower the sse significantly, as pollutant peaks are genereally
-# less prominent and often near zero or noisier then co2 peaks the filter implemented in the pipeline can barely reduce the number
-# of needed fits for dsse checking. This is coused by the ols lower bounds following noise and assigning negative values for parameter optimization.
+# less prominent and often near zero or noisier than co2 peaks the filter implemented in the pipeline can barely reduce the number
+# of needed fits for dsse checking. This is caused by the ols lower bounds following noise and assigning negative values for parameter optimization.
 # The refined filter has a tighter filter with the capability to reduce bvls checks on pollutant
 # data significantly. A Runtime Example from a Dev Repo showed that the pipeline Filter needs 3,5 Seconds on a segment with 30
 # candidates in co2 the refined needs 2,9 seconds (about half the number of fits) and on pollutant the pipeline refine

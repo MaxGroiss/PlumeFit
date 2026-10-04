@@ -11,7 +11,7 @@ year={2023},
 }
 
 """
-# This file contains code created with AI assistance;
+# This file contains code/docs created with AI assistance;
 # unless stated otherwise, Anthropic models were used
 # Individual uses are marked by inline comments stating purpose and extent: AI-Assisted: <Model> ; (Cause)
 # No real data was used for debugging

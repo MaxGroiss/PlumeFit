@@ -1,11 +1,14 @@
-"""Measurement register
+"""Input data structure of both PlumeFit pipelines.
 
-Contains the datastructures the package builds upon.
-Designed to keep the package agnostic against input data format.
+MeasurementRegister holds the channel signals and the light barrier triggers of one
+measurement segment (in the CARES Milan campaign: one measurement day). It keeps the
+pipelines independent of the input file format: every data source only needs a
+converter into this structure, e.g. MeasurementRegister.from_dataframe.
 """
-# This file contains code created with AI assistance;
+# This file contains code/docs created with AI assistance;
 # unless stated otherwise, Anthropic models were used
 # Individual uses are marked by inline comments stating purpose and extent: AI-Assisted: <Model> ; (Cause)
+# AI-Assisted: <Opus 5> ; (Assistance with Docstring writing -> mainly latex equation to Unicode symbol equations)
 
 from __future__ import annotations
 
@@ -16,23 +19,41 @@ import numpy as np
 import pandas as pd
 
 
+def as_samples(td: np.timedelta64, dt: float) -> int:
+    """Convert a duration into a number of samples.
+
+    Args:
+        td: Duration.
+        dt: Sampling interval [s].
+
+    Returns:
+        Number of samples, rounded to the nearest integer.
+    """
+    return round(td / np.timedelta64(1, "s") / dt)
+
+
+
 @dataclass
 class MeasurementRegister:
-    """Datainterface for the package pipelines
+    """Channel signals and light barrier triggers of one measurement segment.
 
-    One MeasurementRegister holds relevant data of one measurement day/segment
-
-    Implements __post_init__ validation checks for pipeline compatibility
-
-    Default Factory for MeasurementRegister is from_dataframe
+    The pipelines address samples by index and convert time windows with a single
+    sampling interval dt, so the timestamps must be (nearly) equidistant. This is
+    validated on construction. Use from_dataframe to build a register from a
+    pandas DataFrame.
 
     Attributes:
-        timestamps: (np.ndarray) Holds the Time Series of the Measurement Data
-        channel_matrix: (np.ndarray) Holds the Pollutant measurements
-        channel_names: (list[str]) Holds the Name of the Pollutants in the channel_matrix
-        vehicle_pass_times: (np.ndarray) Holds the Light Barrier Detection Timestamps
-        timestamp_tolerance_ms: (float) Tolerance for timestamp equidistance validation in milliseconds
-        skip_dt_validation: (bool) Skips the timestamps delta validation (always estimates from median)
+        timestamps: Sample times of the channel signals, datetime64, sorted ascending.
+        channel_matrix: Channel signals, one column per channel (CO₂ and pollutants).
+        channel_names: Name per column of channel_matrix.
+        vehicle_pass_times: Light barrier trigger time per vehicle pass, datetime64, sorted ascending.
+         Must use the same time reference as timestamps.
+        timestamp_tolerance_ms: Maximum allowed deviation of a single sampling interval from the median interval.
+        skip_dt_validation: If True, a violated tolerance only warns and dt is taken from the median interval.
+    Raises:
+        TypeError: If timestamps or vehicle_pass_times are not datetime64.
+        ValueError: If the dimensions of timestamps, channels and names disagree,
+            or if the timestamps are not equidistant and skip_dt_validation is False.
     """
     timestamps: np.ndarray
     channel_matrix: np.ndarray
@@ -89,19 +110,28 @@ class MeasurementRegister:
 
     @property
     def dt(self) -> float:
-        """ Returns the median time difference between timestamps in seconds (Sampling Time)."""
+        """Sampling interval Δt [s], median of all timestamp differences."""
         return float(np.median(np.diff(self.timestamps)/np.timedelta64(1, 's')))
 
     @property
     def source_day(self)-> str:
-        """Returns the measurement day as string in format "datetime64[D]" derived from the first timestamp."""
+        """Date of the first timestamp as "YYYY-MM-DD".
+
+        Together with a pass index it identifies a vehicle pass across segments.
+        """
         return str(self.timestamps[0].astype("datetime64[D]"))
 
     def get_channel_data_by_name(self, name: str) -> np.ndarray:
-        """ Returns data of the named channel
+        """Return the signal of one channel.
 
-        :param name: (str) Name of the channel
-        :return: (np.ndarray) Data from the channel
+        Args:
+            name: Channel name.
+
+        Returns:
+            Channel signal.
+
+        Raises:
+            KeyError: If the channel does not exist.
         """
 
         if name not in self.channel_names:
@@ -116,18 +146,21 @@ class MeasurementRegister:
     @classmethod
     def from_dataframe(cls, df: pd.DataFrame, vehicle_pass_times: np.ndarray, channels: list[str] | None = None,
                        skip_dt_validation: bool = False ) -> MeasurementRegister:
-        """ Returns an object of :class:`MeasurementRegister` from a pandas DataFrame
+        """Build a register from a pandas DataFrame of one measurement segment.
 
-        This factory method takes a pandas DataFrame of the MeasurementData and a numpy array of the vehicle pass times.
-        Optionally, a list of channel names can be provided to select specific channels. Conversions to numpy arrays are
-        performed internally.
+        Args:
+            df: Measurement data. Column 0 must hold the timestamps, the other columns the channels.
+            vehicle_pass_times: Light barrier trigger time per vehicle pass, datetime64, same time reference as the
+                timestamps in df.
+            channels: Columns to take over. None takes all columns after column 0.
+            skip_dt_validation: If True, a violated tolerance only warns and dt is taken from the median interval.
 
-        :param df: (pd.DataFrame) DataFrame of the MeasurementData including the time series at column index 0 !
-        :param vehicle_pass_times: (np.ndarray) Array of the vehicle pass times Light Barrier Trigger times
-        :param channels:(list[str] | None) List of channel names to select; None -> all Channels are selected
-        :param skip_dt_validation: (bool) Skip the timestamp equidistance validation, takes the mean
+        Returns:
+            The register of the segment.
 
-        :return: MeasurementRegister
+        Raises:
+            TypeError: If df is not a DataFrame or vehicle_pass_times is not an ndarray.
+            ValueError: If a requested channel is missing in df.
         """
 
         # Type Checking

@@ -1,58 +1,78 @@
-""" This module contains all QA checks done throughout the extraction pipeline
+"""QA checks of the template extraction.
 
-CO2 channel:
-    assess_vectorized_lb_centered (light-barrier centered window)
-    assess_iterative_peak_centered (peak centered window)
+All functions work on windows already cut by template_extraction.py, one plume per row.
+
+CO₂ channel:
+    assess_vectorized_lb_centered: Window around the light barrier trigger
+        (faulty recording, peak height, peak position).
+    assess_iterative_peak_centered: Window around the CO₂ peak (multiple peaks, tail anomaly).
 
 Pollutant channel:
-    assess_pollutant_peak_centered (window centered on the co2 peak)
+    assess_pollutant_peak_centered: Window around the CO₂ peak (faulty recording,
+        peak search on the smoothed signal, multiple peaks, band around the CO₂ peak).
 
-All the functions in this module operate in already cut windows provided by template_extraction.py
-Noise Relate parameter estimations are justified in src/docs/Herleitungen_WIP.pdf
-TODO: Replace WIP pdf with thesis reference once ready.
+Noise-derived thresholds (h_min, ρ_min, R_krit) are resolved once per segment by
+resolve_qa_thresholds. Thesis: chapter "The PlumeFit algorithm", section "Quality checks".
 """
-# This file contains code created with AI assistance;
+# This file contains code/docs created with AI assistance;
 # unless stated otherwise, Anthropic models were used
 # Individual uses are marked by inline comments stating purpose and extent: AI-Assisted: <Model> ; (Cause)
-
+# AI-Assisted: <Opus 5> ; (Assistance with Docstring writing)
 
 from dataclasses import replace
 
 import numpy as np
 from scipy.signal import find_peaks, savgol_filter
 
-
 from src.plume_template_extraction.extraction_config import ChannelQAConfig
 from src.plume_template_extraction.plume_status import PlumeStatus
 from src.shared_services.noise_and_background import estimate_noise, contiguous_runs, faulty_recording_mask
 
-
+# Minimum number of vehicle-free reference windows for the tail threshold calibration.
+MIN_TAIL_WINDOWS = 30
 
 def null_data_mask(windows: np.ndarray, min_physical_value: float, min_physical_run: int) -> np.ndarray:
-    # NULL_DATA criterion: any nan or below-physical value inside the window
-    return (np.isnan(windows).any(axis=1)
-            | faulty_recording_mask(windows, min_physical_value, min_physical_run).any(axis=1))
+    """Flag windows that contain NaN or a faulty recording (NULL_DATA criterion).
+
+        Args:
+            windows: Plume windows, one per row.
+            min_physical_value: See faulty_recording_mask.
+            min_physical_run: See faulty_recording_mask [samples].
+
+        Returns:
+            Bool per window, True if the window must be rejected.
+        """
+    nan = np.isnan(windows).any(axis=1)
+    faulty_recording = faulty_recording_mask(windows, min_physical_value, min_physical_run).any(axis=1)
+
+    return nan | faulty_recording
 
 
-# Tail Anomaly QA
+def _tail_smooth_window(n_tail: int) -> int:
+    """Rolling mean width L = max(2, ⌊n_tail / 4⌋) for the tail statistic.
 
-def _tail_smooth_window(window_after: int) -> int:
-    # Calibration and QA check must smooth the tail identically
-    return max(2, window_after // 4)
+        Shared by calibration and check, both must smooth identically.
+        """
+    return max(2, n_tail // 4)
 
 def tail_rise_statistic(tail: np.ndarray, tail_smooth_window: int) -> float:
-    """Cumulative re-rise of a signal tail.
+    """Cumulative re-rise R of a signal tail.
 
-    Smooths the tail with a rolling mean and sums all positive increments.
+    Smooths the tail with a rolling mean and sums all positive increments. A clean
+    exponential decay gives R ≈ 0, a second plume or a background step gives large R.
 
-    :param tail: (np.ndarray) 1-D signal tail (window after the main peak).
-    :param tail_smooth_window: (int) Rolling mean width for tail smoothing.
-    :return: (float) Maximum cumulative re-rise, 0.0 if the tail is too short for smoothing.
+
+    Args:
+        tail: Signal after the main peak, 1-D.
+        tail_smooth_window: Rolling mean width L [samples].
+
+    Returns:
+        R = Σ max(0, x[k+1] − x[k]) in the channel unit, 0.0 if the tail is too short
+        for smoothing.
     """
 
-    # AI-Assisted: <Fable 5> ; (Review Rolling Mean Implementation)
+    # AI-Assisted: <Fable 5> ; (Review of Rolling-Mean implementation)
 
-    # Checks if the tail is long enough for smoothing
     if len(tail) < tail_smooth_window + 1:
         return 0.0
 
@@ -61,32 +81,36 @@ def tail_rise_statistic(tail: np.ndarray, tail_smooth_window: int) -> float:
     # Every element of smoothed is the mean of tail_smooth_window elements of tail
     smoothed = np.convolve(tail, kernel, mode='valid')
     # Inside Out: diff->rise/fall->fall=0:only rising is interesting->sum up all positive increments
-    cumulative_rise = np.cumsum(np.maximum(np.diff(smoothed), 0))
-    return float(np.max(cumulative_rise))
+    return float(np.sum(np.maximum(np.diff(smoothed), 0)))
 
 
 def _tail_threshold(residual: np.ndarray, influenced: np.ndarray,
                     tail_len: int, percentile: float) -> float:
-    """Empirical calibration of the absolute tail-rise threshold.
+    """Calibrate the absolute tail threshold R_krit from vehicle-free windows.
 
-    Evaluates the tail statistic on all consecutive vehicle-free windows of tail_len
-    samples — the distribution of the statistic under "no vehicle present" — and
-    returns the requested percentile. A tail is flagged if its cumulative re-rise exceeds
-    the value that noise alone stays below in tail_percentile % of vehicle-free windows.
+    The vehicle-free samples are split into contiguous runs, every run is cut into
+    non-overlapping windows of tail_len samples. R of all windows
+    is the distribution of the statistic without a vehicle, its percentile is R_krit:
+    a tail is flagged if it re-rises more than noise alone does in percentile % of the
+    vehicle-free windows.
 
-    :param residual: (np.ndarray) Background subtracted channel signal of the day
-    :param influenced: (np.ndarray) Bool mask of vehicle-influenced samples
-    :param tail_len: (int) Tail length in samples (window after the peak)
-    :param percentile: (float) Percentile of the distribution used as threshold
-    :return: (float) Absolute tail-rise threshold in signal units
-    :raises ValueError: Too few vehicle-free windows
+    Args:
+        residual: Background-subtracted signal of the segment.
+        influenced: Vehicle-influenced samples, see influence_mask.
+        tail_len: Tail length = window_after_peak in samples.
+        percentile: Percentile q_an of the distribution.
+
+    Returns:
+        R_krit in the channel unit.
+
+    Raises:
+        ValueError: If fewer than MIN_TAIL_WINDOWS vehicle-free windows exist.
     """
     smooth_window = _tail_smooth_window(tail_len)
-    # Split the free samples into contiguous runs, chop every run into tail_len windows
     starts, stops = contiguous_runs(~influenced & np.isfinite(residual), tail_len)
     stats = [tail_rise_statistic(residual[k:k + tail_len], smooth_window)
              for a, b in zip(starts, stops) for k in range(a, b - tail_len + 1, tail_len)]
-    if len(stats) < 30:
+    if len(stats) < MIN_TAIL_WINDOWS:
         raise ValueError(f"Only {len(stats)} vehicle-free windows available "
                          f"for tail threshold calibration")
     return float(np.percentile(stats, percentile))
@@ -94,50 +118,67 @@ def _tail_threshold(residual: np.ndarray, influenced: np.ndarray,
 
 def resolve_qa_thresholds(qa_config: ChannelQAConfig, residual: np.ndarray,
                           influenced: np.ndarray, tail_len: int | None = None) -> ChannelQAConfig:
-    """Resolves the noise-derived QA thresholds of a channel for one day.
+    """Fill the noise-derived thresholds of a QA config for one segment.
 
-    :param qa_config: (ChannelQAConfig) QA configuration, thresholds possibly None
-    :param residual: (np.ndarray) Background subtracted channel signal of the day
-    :param influenced: (np.ndarray) Bool mask of vehicle-influenced samples
-    :param tail_len: (int | None) Tail length for the calibration, None skips it
-                     (channels whose QA never runs the tail check)
-    :return: (ChannelQAConfig) Thresholds
+    h_min = median(r_F) + k₁ · σ, ρ_min = k₂ · σ and R_krit (see _tail_threshold) are
+    only computed where the config holds None. Thresholds given by the user are kept.
+
+    Args:
+        qa_config: QA config, thresholds possibly None.
+        residual: Background-subtracted signal of the segment.
+        influenced: Vehicle-influenced samples, see influence_mask.
+        tail_len: Tail length in samples for the R_krit calibration. None skips it
+            (pollutant channels, which have no tail check).
+
+    Returns:
+        Copy of qa_config with resolved thresholds.
     """
     need_tail = (tail_len is not None and qa_config.tail_rise_ratio is None
                  and qa_config.tail_rise_abs is None)
-    peak = qa_config.min_peak_above_bg
-    floor = qa_config.min_prominence_floor
-    if peak is not None and floor is not None and not need_tail:
+    h_min = qa_config.min_peak_above_bg
+    rho_min = qa_config.min_prominence_floor
+    if h_min is not None and rho_min is not None and not need_tail:
         return qa_config
-    if peak is None or floor is None:
+    if h_min is None or rho_min is None:
         med, sigma = estimate_noise(residual, influenced)
-        if peak is None:
-            peak = med + qa_config.peak_above_bg_sigma * sigma
-        if floor is None:
-            floor = qa_config.prominence_floor_sigma * sigma
+        # h_min is compared to the height above b, which is biased low -> includes the median offset.
+        # ρ_min is a height difference between peak and surroundings -> no offset
+        if h_min is None:
+            h_min = med + qa_config.peak_above_bg_sigma * sigma
+        if rho_min is None:
+            rho_min = qa_config.prominence_floor_sigma * sigma
     tail_abs = qa_config.tail_rise_abs
     if need_tail:
         tail_abs = _tail_threshold(residual, influenced, tail_len, qa_config.tail_percentile)
-    return replace(qa_config, min_peak_above_bg=peak, min_prominence_floor=floor,
+    return replace(qa_config, min_peak_above_bg=h_min, min_prominence_floor=rho_min,
                    tail_rise_abs=tail_abs)
 
 
 def assess_vectorized_lb_centered(plumes: np.ndarray, samples_before: int, peak_search_window: int,
                                   backgrounds: np.ndarray, qa_config: ChannelQAConfig,
                                   min_physical_run: int) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Vectorized quality assessment for LB centered plumes.
+    """First CO₂ QA stage on windows around the light barrier trigger, vectorized.
 
-    :param plumes: (np.ndarray) Isolated plumes
-    :param samples_before: (int)  Window constraints left
-    :param peak_search_window: (int) Window constraints right
-    :param backgrounds: (np.ndarray) Background values
-    :param qa_config: (ChannelQAConfig) QA configuration
-    :param min_physical_run: Minimum consecutive below-threshold samples to count as faulty
-    :return: Tuple (np.ndarray, np.ndarray) of plume statuses and relative peak indices
+    Checks for faulty recordings, finds the CO₂ peak as the maximum after the
+    trigger and checks its height and position.
+
+    Args:
+        plumes: CO₂ windows around the trigger, one per row.
+        samples_before: Samples before the trigger in each window -> the column
+            of the trigger (window_before in samples).
+        peak_search_window: Samples after the trigger searched for the peak
+            (peak_search_after in samples).
+        backgrounds: b(t_LB) per window.
+        qa_config: Resolved CO₂ QA config.
+        min_physical_run: See faulty_recording_mask in samples.
+
+    Returns:
+        Tuple (statuses, rel_peak_idx):
+            statuses: PlumeStatus per window (VALID, NO_PEAK or NULL_DATA).
+            rel_peak_idx: Peak position relative to the trigger in samples, equals
+                the trigger-to-peak delay.
     """
 
-    # Checks every plume on nan and below physical value -> NULL_DATA
     null_mask = null_data_mask(plumes, qa_config.min_physical_value, min_physical_run)
 
     # Peak search in the window of interest (search window after the LB pass), high SNR -> plain argmax
@@ -150,12 +191,12 @@ def assess_vectorized_lb_centered(plumes: np.ndarray, samples_before: int, peak_
 
     # Check for NO_PEAK
     statuses[peak_height < qa_config.min_peak_above_bg] = PlumeStatus.NO_PEAK
-    # Chek if peaks are positioned in the last samples of the window
+    # A maximum on the first or last sample of the search window is no peak but a
+    # rising or falling signal reaching beyond the window
     at_edge = (rel_peak_idx == 0) | (rel_peak_idx == peak_search_window - 1)
     statuses[at_edge] = PlumeStatus.NO_PEAK
 
-
-    # Assign Null Mask overrides all other statuses
+    # NULL_DATA overrides all other statuses (prominence cheks on NaN windows is meaningless)
     statuses[null_mask] = PlumeStatus.NULL_DATA
 
     return statuses, rel_peak_idx
@@ -165,31 +206,40 @@ def check_tail_anomaly(plume: np.ndarray,
                        peak_idx: int,
                        threshold: float,
                        tail_smooth_window: int) -> bool:
-    """Detect sustained re-rises in the plume tail.
+    """Check whether the tail after the peak re-rises more than the threshold.
 
-        :param plume: (np.ndarray) Isolated plumes
-        :param peak_idx: (int) Index of the main peak.
-        :param threshold: (float) Absolute threshold for the cumulative re-rise in signal units.
-        :param tail_smooth_window: (int) Rolling mean width for tail smoothing.
-        :returns: (bool) True if the tail shows an anomalous re-rise.
-        """
+    Args:
+        plume: One peak-centered plume.
+        peak_idx: Column of the peak.
+        threshold: R_krit in the channel unit.
+        tail_smooth_window: Rolling mean width in samples.
 
-    # Defines the window after the peak as the tail
+    Returns:
+        True if R_tail > R_krit.
+    """
+
     return tail_rise_statistic(plume[peak_idx:], tail_smooth_window) > threshold
 
 
 def check_multiple_peaks(plume: np.ndarray, peak_idx: int, background: float,
                          min_prominence_ratio: float,
                          min_prominence_floor: float) -> bool:
-    """Check for more than one prominent peak.
+    """Check whether a plume has more than one prominent peak.
 
-        :param plume: (np.ndarray) Isolated plumes
-        :param peak_idx: (int) Index of the peak.
-        :param background: (float) Background value.
-        :param min_prominence_ratio: (float) Prominence threshold as fraction of peak height.
-        :param min_prominence_floor: (float) Absolute minimum prominence.
-        :returns: (bool) True if multiple peaks are detected.
-        """
+    A peak counts if its prominence exceeds max(ρ_min, ρ_rel · h), with h the height
+    of the main peak above the background.
+
+    Args:
+        plume: One peak-centered plume.
+        peak_idx: Column of the main peak.
+        background: b(t_LB) of the plume.
+        min_prominence_ratio: ρ_rel.
+        min_prominence_floor: ρ_min in the channel unit.
+
+    Returns:
+        True if more than one prominent peak is found.
+    """
+
     peak_height = plume[peak_idx] - background
     # Defines how high a peak must be to be considered prominent
     effective_prominence = max(min_prominence_floor, peak_height * min_prominence_ratio)
@@ -201,17 +251,22 @@ def check_multiple_peaks(plume: np.ndarray, peak_idx: int, background: float,
 
 def assess_iterative_peak_centered(plumes: np.ndarray, backgrounds: np.ndarray, peak_index: int,
                                    window_after: int, qa_config: ChannelQAConfig, min_physical_run: int = 1) -> np.ndarray:
-    """
-    Iterative assessment of plume quality based on peak centered plumes.
+    """Second CO₂ QA stage on windows around the CO₂ peak, one plume at a time.
 
+    Order: faulty recording, multiple peaks, tail anomaly. The first failing check
+    sets the status.
 
-    :param plumes: (np.ndarray) Peak Centered Plumes
-    :param backgrounds: (np.ndarray) Background values
-    :param peak_index: (int) Index of the Main Peak of the Plume (Window constraints left)
-    :param window_after: (int) Window constraints right
-    :param qa_config: (ChannelQAConfig) QA configuration
-    :param min_physical_run: Minimum consecutive below-threshold samples to count as faulty
-    :return: (np.ndarray) List of plume statuses
+    Args:
+        plumes: Peak-centered CO₂ plumes, one per row.
+        backgrounds: b(t_LB) per plume.
+        peak_index: Column of the peak (window_before_peak in samples).
+        window_after: Samples after the peak (window_after_peak in samples), sets the
+            tail smoothing width.
+        qa_config: Resolved CO₂ QA config.
+        min_physical_run: See faulty_recording_mask in samples.
+
+    Returns:
+        PlumeStatus per plume (VALID, NULL_DATA, MULTIPLE_PEAKS or TAIL_ANOMALY).
     """
     statuses = []
 
@@ -230,8 +285,7 @@ def assess_iterative_peak_centered(plumes: np.ndarray, backgrounds: np.ndarray, 
                                 qa_config.min_prominence_floor):
             statuses.append(PlumeStatus.MULTIPLE_PEAKS)
             continue
-        # Tail threshold: noise-referenced absolute value if derived (H0 calibration),
-        # else relative to the peak height of this plume
+        # Calibrated absolute threshold if available, else relative to this plume's peak heigh
         tail_threshold = (qa_config.tail_rise_abs if qa_config.tail_rise_abs is not None
                           else qa_config.tail_rise_ratio * (plume[peak_index] - bg))
         if check_tail_anomaly(plume, peak_index, tail_threshold, tail_smooth_window):
@@ -247,18 +301,29 @@ def assess_pollutant_peak_centered(windows: np.ndarray, backgrounds: np.ndarray,
                                    band_before: int, band_after: int,
                                    center: int, smooth_window: int,
                                    min_physical_run: int) -> tuple[np.ndarray, np.ndarray]:
-    """Quality assessment and peak search for pollutant windows centered on the co2 peak.
+    """QA and peak search for pollutant windows cut around the CO₂ peak.
 
-    :param windows: (np.ndarray) Pollutant windows cut around the co2 peak
-    :param backgrounds: (np.ndarray) Background value per window
-    :param qa_config: (ChannelQAConfig) QA configuration of the pollutant channel
-    :param band_before: (int) Samples before the co2 peak where the pollutant peak is accepted
-    :param band_after: (int) Samples after the co2 peak where the pollutant peak is accepted
-    :param center: (int) Index of the co2 peak inside the window
-    :param smooth_window: (int) Savitzky-golay window in samples, odd (converted in find_pollutant_peak)
-    :param min_physical_run: Minimum consecutive below-threshold samples to count as faulty
-    :return: Tuple (np.ndarray, np.ndarray) of plume statuses and pollutant peak offsets relative to the co2 peak
-             (offset = 0 if no valid pollutant peak)
+    The peak search runs on a Savitzky-Golay smoothed copy (lower SNR than CO₂), the
+    window itself stays unchanged. Candidates must exceed ρ_min in prominence,
+    a peak counts if its prominence ≥ ρ_rel · height of the highest candidate
+    and its height ≥ h_min. Exactly one peak must remain, and it must lie in the band
+    [center − band_before, center + band_after].
+
+    Args:
+        windows: Pollutant windows centered on the CO₂ peak, one per row.
+        backgrounds: Pollutant b(t_LB) per window.
+        qa_config: Resolved pollutant QA config.
+        band_before: Accepted peak position before the CO₂ peak in samples.
+        band_after: Accepted peak position after the CO₂ peak in samples.
+        center: Column of the CO₂ peak in the window.
+        smooth_window: Savitzky-Golay window in samples, odd and > smooth_polyorder.
+        min_physical_run: See faulty_recording_mask in samples.
+
+    Returns:
+        Tuple (statuses, offsets):
+            statuses: PlumeStatus per window (VALID, NULL_DATA, NO_PEAK or MULTIPLE_PEAKS).
+            offsets: Pollutant peak position relative to the CO₂ peak in samples,
+                0 where no valid peak was found.
     """
     number_of_plumes = windows.shape[0]
     statuses = np.full(number_of_plumes, PlumeStatus.VALID, dtype=object)
@@ -279,37 +344,37 @@ def assess_pollutant_peak_centered(windows: np.ndarray, backgrounds: np.ndarray,
                                   polyorder=qa_config.smooth_polyorder, axis=1)
 
     # The pollutant search band needs to be relativ to the co2 peak center
-    rel_band_lop = center - band_before
-    rel_band_rop = center + band_after
+    band_lo = center - band_before
+    band_hi = center + band_after
 
     for plume_idx in np.flatnonzero(valid):
         # Scipy find_peaks is performed on the smoothed signal window
-        rel_peak_candidates, props = find_peaks(smooth[plume_idx], prominence=qa_config.min_prominence_floor)
+        candidates, props = find_peaks(smooth[plume_idx], prominence=qa_config.min_prominence_floor)
         # Regrading prominence a floor is given so peaks underneath a certain threshold (noise peaks)
         # are not even counted as peaks
-        if rel_peak_candidates.size == 0:
+        if candidates.size == 0:
             statuses[plume_idx] = PlumeStatus.NO_PEAK
             continue
 
-        # Now it is checked if there is one or more clearly prominent peaks (Has to happen on whole Window not
-        # just the small search frame)
-        peak_heights = smooth[plume_idx, rel_peak_candidates] - backgrounds[plume_idx]
+        # Prominence is judged on the whole window, not only inside the band:
+        # a second plume next to the band still makes the window unusable
+        peak_heights = smooth[plume_idx, candidates] - backgrounds[plume_idx]
         main_peak_height = peak_heights.max()
         prom_valid = props["prominences"] >= qa_config.min_prominence_ratio * main_peak_height
         height_valid = peak_heights >= qa_config.min_peak_above_bg
-        prominent_peak_candidates = rel_peak_candidates[prom_valid & height_valid]
+        prominent = candidates[prom_valid & height_valid]
 
-        if prominent_peak_candidates.size == 0:
+        if prominent.size == 0:
             # This plume has no valid peaks
             statuses[plume_idx] = PlumeStatus.NO_PEAK
-        elif prominent_peak_candidates.size > 1:
+        elif prominent.size > 1:
             # This plume has multiple valid peaks -> potential peak overlap
             statuses[plume_idx] = PlumeStatus.MULTIPLE_PEAKS
         else:
             # Valid Peak found -> Pollutant peak found
             # Peak is only valid if it sits in the tight search window around the co2 peak
-            peak = prominent_peak_candidates[0]
-            if rel_band_lop <= peak <= rel_band_rop:
+            peak = prominent[0]
+            if band_lo <= peak <= band_hi:
                 offsets[plume_idx] = peak - center
             else:
                 statuses[plume_idx] = PlumeStatus.NO_PEAK

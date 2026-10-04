@@ -1,17 +1,19 @@
-"""This module contains the input configuration structure of the template extraction pipeline.
+"""Input configuration of the template extraction pipeline.
 
-- ExtractionConfig holds the Extraction configuration for ONE Channel / Co2 Poll Couple
-- ChannelQAConfig  holds the extraction QA Parameters of ONE Channel
+ExtractionConfig holds the window and background parameters of one CO₂ channel or one
+CO₂/pollutant channel pair, ChannelQAConfig the QA parameters of one channel. They are
+separated because the windows should stay the same across all channels of an analysis,
+while the QA thresholds are channel dependent.
 
-The separation between ExtractionConfig and ChannelQAConfig was done because most of the Extraction Config can/should
-be kept the same across different channels while ChannelQAConfig is highly channel dependent
+Pipeline: one MeasurementRegister and one ExtractionConfig per channel (pair)
+-> extract_plumes -> ExtractionResult. All QA checks live in extraction_quality.py.
 
-All QA Checks happen in extraction_quality.py
-
-Extraction Pipeline:
-Expects One MeasurementRegistry and One Extraction Config per Channel -> Extraction and QA Checks are performed using
-the defined Config Parameters -> ExtractionResult.
+Typical values are derived by looking at plumes during the development process. May vary for different campaigns.
 """
+# This file contains docs created with AI assistance;
+# unless stated otherwise, Anthropic models were used
+# Individual uses are marked by inline comments stating purpose and extent: AI-Assisted: <Model> ; (Cause)
+# AI-Assisted: <Opus 5> ; (Assistance with Docstring writing)
 
 from dataclasses import dataclass, field
 
@@ -19,53 +21,59 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ChannelQAConfig:
-    """QA Parameters of ONE Channel
+    """QA parameters of one channel.
 
-    Setting Attributes to None if available derives those parameters directly from the measurement data.
+    Thresholds set to None are derived per measurement segment from the vehicle-free
+    residual (noise σ̂ or tail statistic), see extraction_quality.resolve_qa_thresholds.
 
     Attributes:
-        band_before_co2_peak: (timedelta64(x, "s")) Poll Peak search band before co2 peak
-        band_after_co2_peak: (timedelta64(x, "s")) Poll Peak search band after co2 peak
+        band_before_co2_peak: Pollutant only. Accepted pollutant peak position before
+            the CO₂ peak. Default 2 s. Sensor dependent, derive from the distribution of
+            ExtractionResult.pollutant_offsets.
+        band_after_co2_peak: Pollutant only. Accepted pollutant peak position after
+            the CO₂ peak. Default 4 s. Sensor dependent, see band_before_co2_peak.
 
-        smooth_window: (timedelta64(x, "ms")) Filter window has to fit in a plume peak, needs enough samples for noise
-                        suppression, converted into an uneven sample window > polyorder
-        smooth_polyorder: (int) Order of savitzky-golay filter
+        smooth_window: Pollutant only. Savitzky-Golay window for the peak search.
+            Default 2.5 s, typical 1–4 s. Must be shorter than the plume peak;
+            converted to an odd number of samples > smooth_polyorder.
+        smooth_polyorder: Pollutant only. Polynomial order of the Savitzky-Golay filter.
+            Default 2
 
-        min_physical_value: (float) Faulty Value Threshold (including background)
-        min_physical_run: (timedelta64(x, "s")) Minimum consecutive below-threshold seconds to count as faulty
+        min_physical_value: Lowest physically plausible value incl. background in the
+            channel unit. Default 5.0. Channel dependent, no universal default.
+        min_physical_run: Minimum duration below min_physical_value to count as a
+            faulty recording (NULL_DATA). Default 2 s
 
-        min_peak_above_bg: (float | None) Values below this threshold can't be a peak (above background)
-                            None -> Derived trough vehicle free residual noise * peak_above_bg_sigma
-        peak_above_bg_sigma: (float) Sigma multiplier for the derived min_peak_above_bg
+        min_peak_above_bg: Minimum peak height above the background, h_min.
+            None (default) derives h_min = median(r_F) + peak_above_bg_sigma · σ.
+        peak_above_bg_sigma: k₁ for the derived h_min. Default 3.0.
 
-        min_prominence_ratio: (float) Second peak counts as a real peak if its prominence exceeds this fraction of the
-                              main peak
-        min_prominence_floor: (float | None) Absolute prominence floor for multi peak detection (noise suppression)
-                            None -> Derived trough noise estimation * prominence_floor_sigma
-        prominence_floor_sigma: (float) Sigma multiplier for the derived min_prominence_floor
+        min_effective_width: Minimum effective plume width A / h after zeroing,
+            T_w,min (NON_PLAUSIBLE_AREA). Default 1.5 s, typical 1–3 s. Below the
+            narrowest physically plausible plume.
 
-        tail_rise_ratio: (float | None) Cumulative rise in tail flagged if exceeding this faction of peak height
-                         None -> Runs Check trough tail_rise_abs instead
-        tail_rise_abs: (float | None) Absolute Threshold for cumulative rise, avoids bias behavior between peak heights
-                         None -> Derives the value by rise caused by noise in vehicle free windows of tail length
-                                A tail is flagged if its cumulative re-rise exceeds the value that noise alone stays
-                                below in tail_percentile % of vehicle-free windows
-        tail_percentile: (float) Percentile of the vehicle-free tail statistic used as tail_rise_abs
-                                    Increasing the value lowers the filter strength
+        min_prominence_ratio: A second peak counts if its prominence exceeds this
+            fraction of the main peak height, ρ_rel. Default 0.3, typical 0.2–0.5.
+            Smaller is stricter.
+        min_prominence_floor: Absolute prominence floor against noise peaks, ρ_min.
+            None (default) derives ρ_min = prominence_floor_sigma · σ.
+        prominence_floor_sigma: k₂ for the derived ρ_min. Default 3.0, typical 3–5.
+
+        tail_rise_ratio: CO₂ only, alternative tail threshold relative to the peak
+            height of each plume. Default None (inactive).
+        tail_rise_abs: CO₂ only, absolute tail threshold R_krit in the channel unit.
+            None (default) calibrates it from vehicle-free windows (see tail_percentile).
+            Takes precedence over tail_rise_ratio if both are set.
+        tail_percentile: CO₂ only. Percentile q_an of the vehicle-free tail statistic
+            used as R_krit. Default 95, typical 90–99. Higher is more tolerant.
     """
 
-    # Search band where the pollutant peak is expected to occur around the associated Co2 peak
-    # Manually derive trough sensor/setup parameters
     band_before_co2_peak: np.timedelta64 = np.timedelta64(2, "s")
     band_after_co2_peak: np.timedelta64 = np.timedelta64(4, "s")
 
-    # Savitzky-Golay Parameters used in pollutant peak finding in the plume_quality/assess_pollutant_peak_centered fct.
-    # Filter window has to fit in a plume peak, needs enough samples for noise suppression, has to be an uneven window
-    # size and samples > smooth polyorder
     smooth_window: np.timedelta64 = np.timedelta64(2500, "ms")
     smooth_polyorder: int = 2
 
-    # QA-Parameters
     min_physical_value: float = 5.0
     min_physical_run: np.timedelta64 = np.timedelta64(2,"s")
 
@@ -84,30 +92,54 @@ class ChannelQAConfig:
 
 @dataclass(frozen=True)
 class ExtractionConfig:
-    """ Extraction Parameters
+    """Window, background and QA parameters of the extraction for one channel (pair).
 
-    Parameters that are not obviously channel dependent should be kept the same across an analysis.
-    Configs that are aiming to extract pollutant templates need to have a co2 config included because co2 and pollutant
-    channels are tightly coupled and the co2 channel is used to assist pollutant extraction.
+    Pollutant templates always need the coupled CO₂ channel: the pollutant peak is
+    searched around the CO₂ peak. Window parameters should be identical for all
+    channels of an analysis, otherwise the results cannot be combined.
 
     Attributes:
-        co2_channel: (str) Name of the Co2 Channel present in MeasurementRegister this config is for
-        poll_channel: (str | None) Name of the pollutant channel (coupled with co2_channel)
-        drop_co2_invalid_poll: (bool) Decides if the pipeline drops all co2 plumes that are connected to
-                               an invalid pollutant plume. For Template generation this should be set to false
+        co2_channel: Name of the CO₂ channel in the MeasurementRegister.
+        poll_channel: Name of the coupled pollutant channel. None (default) runs a
+            CO₂-only extraction.
+        drop_co2_invalid_poll: If True, CO₂ plumes whose pollutant plume failed QA
+            are dropped as well. Default False (keep for template generation).
 
-        min_gap: (timedelta64(x, "s")) Minimum gap between passing "Vehicle Neighbors" to be counted as isolated
+        min_gap: Minimum distance of both neighboring light barrier triggers for a pass
+            to count as isolated. Default 30 s, typical 30–60 s.
+            Should satisfy min_gap ≥ window_before_peak + window_after_peak + spread
+            of the trigger-to-peak delay, otherwise a neighbor's tail can reach the
+            zeroing window.
 
-        window_before: (timedelta64(x, "s")) Left border of the isolation window around the LightBarrier Trigger
-        window_after: (timedelta64(x, "s")) Right border of the isolation window around the LightBarrier Trigger
+        window_before: Light barrier window before the trigger (NULL_DATA check).
+            Default 15 s, must be ≤ min_gap.
+        window_after: Light barrier window after the trigger. Default 25 s, must be
+            ≥ peak_search_after and ≤ min_gap.
 
-        peak_search_after: (timedelta64(x, "s")) TimeFrame in wich Co2 peak is expected after LB Trigger
-        window_before_peak: (timedelta64(x, "s")) TimeFrame before the Co2 peak (Cutout Window)
-        window_after_peak: (timedelta64(x, "s")) TimeFrame after the Co2 peak (Cutout Window)
+        peak_search_after: Time after the trigger in which the CO₂ peak is searched.
+            Default 15 s, typical 5–20 s. At least the largest plausible
+            trigger-to-peak delay (see ExtractionResult.trigger_delays).
+        window_before_peak: Cutout before the peak, start of the template window.
+            Default 10 s, typical 5–15 s. Rise time + baseline_anchor must fit.
+        window_after_peak: Cutout after the peak, also tail length T_tail of the tail
+            check. Default 20 s, typical 15–30 s.
 
-        bg_percentile: (float) Choosing a low percentile ensures that peaks don't influence the background calculation
-        bg_rolling_window: (timedelta64(x, "s")) Time width of the rolling background window,
-                           converted to samples during extraction should be comfortably greater than a plume window
+        baseline_anchor: Duration at the start of the peak window whose mean is
+            subtracted before normalization (zeroing). Default 1.5 s, typical 1–3 s.
+            Must be < window_before_peak.
+
+        bg_percentile: Percentile q of the rolling background in percent.
+            Default 2, typical 1–5. Needs ≥ q % vehicle-free time per window.
+        bg_rolling_window: Rolling background window T_RW. Default 100 s,
+            typical 60–300 s; much longer than the plume window.
+
+        co2_qa: QA parameters of the CO₂ channel.
+        pollutant_qa: QA parameters of the pollutant channel, required if
+            poll_channel is set.
+
+    Raises:
+        ValueError: If the window parameters are inconsistent or pollutant_qa is
+            missing for a pollutant channel.
     """
 
     co2_channel: str
@@ -130,17 +162,13 @@ class ExtractionConfig:
     window_before_peak: np.timedelta64 = np.timedelta64(10, "s")
     window_after_peak: np.timedelta64 = np.timedelta64(20, "s")
 
-    # This
     baseline_anchor: np.timedelta64 = np.timedelta64(1500, "ms")
 
     bg_percentile: float = 2.0
     bg_rolling_window: np.timedelta64 = np.timedelta64(100, "s")
 
-
     co2_qa: ChannelQAConfig = field(default_factory=ChannelQAConfig)
     pollutant_qa: ChannelQAConfig | None = None
-
-
 
     def __post_init__(self):
         if self.poll_channel is not None and self.pollutant_qa is None:
@@ -151,14 +179,19 @@ class ExtractionConfig:
             raise ValueError("Window After must be smaller than Minimum Gap.")
         if self.window_before > self.min_gap:
             raise ValueError("Window Before must be smaller than Minimum Gap.")
+        if self.baseline_anchor >= self.window_before_peak:
+            raise ValueError("Baseline Anchor needs to fit in the window before the peak.")
 
 
     @staticmethod
     def as_samples(td: np.timedelta64, dt: float) -> int:
-        """Calculate the number of samples in a time duration.
+        """Convert a duration into a number of samples.
 
-        :param td: Time duration
-        :param dt: Sampling interval in seconds
-        :return: Number of samples (rounded)
+        Args:
+            td: Duration.
+            dt: Sampling interval [s].
+
+        Returns:
+            Number of samples, rounded to the nearest integer.
         """
         return round(td / np.timedelta64(1, "s") / dt)
