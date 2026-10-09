@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 from src.plume_template_extraction.extraction_result import CombinedResult
 # Change / Delete for normal plt plotting style
-from implementations.plotting.template import plotting_template as tp
+from implementations.helpers.plotting_template import plotting_template as tp
 
 # Directory where the grouped csv folders are located
 GROUP_CSV_DIRECTORY = Path(__file__).parent / "output"

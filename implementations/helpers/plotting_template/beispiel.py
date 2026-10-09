@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import implementations.plotting.template.plotting_template as tp
+import implementations.helpers.template.plotting_template as tp
 
 tp.setup(figures_dir="../plt_figures", textwidth_mm=160)
 

@@ -162,7 +162,7 @@ def classify(tech: pd.DataFrame) -> pd.DataFrame:
                                       np.where(t["duty_class"] == "HDV", w.gt(3500) | w.isna(), True))
 
     # Exhaust side assumption European manufacturers usually have the exhaust on the
-    # left, from Asia or the United States -> Europe: left, Asia/North America: right.
+    # left, from Asia or the United States right -> Europe: left, Asia/North America: right.
     reg = pd.read_csv(MANUFACTURER_REGION_CSV, sep=";")
     t["manufacturer_region"] = t["manufacturer"].map(dict(zip(reg["manufacturer"], reg["region"]))).fillna("unknown")
     side = t["manufacturer_region"].map({"Asia": "right", "North America": "right", "Europe": "left"}).fillna("unknown")

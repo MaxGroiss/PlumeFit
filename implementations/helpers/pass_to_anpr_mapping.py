@@ -86,7 +86,7 @@ def load_lb_passes ()-> pd.DataFrame:
     passes["a_error"] = passes["a_error"].fillna(0)
     # Results in
     """
-        pass_id	er_day_index	lb_time	a	v	lb_length_m	a_error
+        pass_id	per_day_index	lb_time	a	v	lb_length_m	a_error
     0	0	2021-09-26 00:03:43.000000	-0,785838769	5,622365976	2,068393622	2,821324036
     1	1	2021-09-26 00:06:44.000000	-3,772971822	9,8381336	6,157200916	2,614065081
     2	2	2021-09-26 00:06:48.000000	1,062799464	5,416860951	3,87953287	0,92035736

@@ -29,6 +29,12 @@ https://doi.org/10.1007/978-3-642-01837-4
 # AI-Assisted: <Opus 5> ; (Assistance with Docstring writing, latex equation to Unicode symbol equations,
 #  Variable Renaming Suggestions to reflect the used variables in the thesis)
 
+#TODO: Investigate the weight of long segments on the run time, and evaluate a couple of long scenarios, maybe it is
+# reasonable to devide very long segments by chosing a plume that gets put in both design matrixes of the brute force seperated
+# segment, if it deliveres the same result in both sub segments the seperation probably has no effekt on the fit, or include the
+# seperation plume in the design matrix at a fixed post refined position of the previous segment ??
+
+
 import numpy as np
 from scipy.optimize import lsq_linear
 

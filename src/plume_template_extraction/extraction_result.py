@@ -83,7 +83,8 @@ class ExtractionResult(_PlumeStats):
 
     channel: str
     config: ExtractionConfig
-
+    #TODO: Re add Matrix that stores every extracted plume (LB-Centered Width because all plumes no matter what qa they fail or pass are equal length there)
+    #TODO: Re add QA-Mapping to those plumes, so it is easy to paste all plumes that failed a certain qa-check
     areas: np.ndarray
     normalized_matrix: np.ndarray
     centered_matrix: np.ndarray

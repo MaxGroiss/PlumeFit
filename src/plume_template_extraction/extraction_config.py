@@ -15,6 +15,8 @@ Typical values are derived by looking at plumes during the development process. 
 # Individual uses are marked by inline comments stating purpose and extent: AI-Assisted: <Model> ; (Cause)
 # AI-Assisted: <Opus 5> ; (Assistance with Docstring writing)
 
+#TODO: Here and in QA: Add some sort of maximum threshold for co2/pollutants to filter calibration / testing plumes with generally way higher amplitudes as a regular plume
+
 from dataclasses import dataclass, field
 
 import numpy as np
