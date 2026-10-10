@@ -79,6 +79,14 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Results Exluded to save IDE Resources
+*.csv
+*.png
+*.svg
+*.pdf
+*.json
+
+
 # IPython
 profile_default/
 ipython_config.py

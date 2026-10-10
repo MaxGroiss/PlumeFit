@@ -152,6 +152,15 @@ class ExtractionConfig:
     window_before: np.timedelta64 = np.timedelta64(15, "s")
     window_after: np.timedelta64 = np.timedelta64(25, "s")
 
+    # TODO: Auto window mode: Derive the light barrier window and the isolation
+    #   from peak_search_after and the peak window instead of setting min_gap / window_before / window_after by hand.
+    #   Isolation would be checked after the peak search on the actual peak windows, so no neighbor can reach into
+    #   the template window, which min_gap on the trigger times alone does not guarantee.
+    # TODO: The algorithm assumes that the measurement site is build in a way, where the light barrier detects the
+    #   vehicle before its exhaust plume is measured -> Could be an option to enable a small +/- search band around the
+    #   trigger.
+    #   For Pollutants the peak is searched in a band around the co2 peak so there it is already bi directional.
+
     peak_search_after: np.timedelta64 = np.timedelta64(15, "s")
 
 
@@ -184,7 +193,8 @@ class ExtractionConfig:
         if self.baseline_anchor >= self.window_before_peak:
             raise ValueError("Baseline Anchor needs to fit in the window before the peak.")
 
-
+    # TODO: Could be moved in a separate file -> normalisation to eliminate the need of importing the whole class for
+    #    this method
     @staticmethod
     def as_samples(td: np.timedelta64, dt: float) -> int:
         """Convert a duration into a number of samples.
