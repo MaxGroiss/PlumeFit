@@ -38,11 +38,10 @@ https://doi.org/10.1007/978-3-642-01837-4
 import numpy as np
 from scipy.optimize import lsq_linear
 
-from src.shared_services.measurement_register import MeasurementRegister
+from src.shared_services.measurement_register import MeasurementRegister, as_samples
 from src.shared_services.noise_and_background import (compute_background_series, contiguous_runs,
                                                       estimate_noise, influence_mask, faulty_recording_mask)
 
-from src.plume_template_extraction.extraction_config import ExtractionConfig
 from src.mode_linear_fitting.fitting_config import ShapeTemplate, Segment, ModeLConfig
 from src.mode_linear_fitting.fitting_result import PassAmplitude, ModeLFitResult, SegmentRecord, DayFitResult
 
@@ -471,20 +470,20 @@ def fit_day(register: MeasurementRegister, channel: str, template: ShapeTemplate
     data = register.get_channel_data_by_name(channel)
     # Faulty recordings (dropouts, instrument off) become NaN, fit_mode_l skips those rows
     dt = register.dt
-    phys_run = ExtractionConfig.as_samples(cfg.min_physical_run,dt)
+    phys_run = as_samples(cfg.min_physical_run, dt)
     data = np.where(faulty_recording_mask(data, cfg.min_physical_value, phys_run), np.nan, data)
 
     # Calculate the background subtracted signal
     # The baseline is subtracted using the same method as in plume_extraction.py
     # the remaining background correction happens in the fitting itself
     residual = data - compute_background_series(
-        data, cfg.bg_percentile, ExtractionConfig.as_samples(cfg.bg_rolling_window, dt),
+        data, cfg.bg_percentile, as_samples(cfg.bg_rolling_window, dt),
         cfg.min_physical_value, phys_run)
 
     # Unit conversion
-    n_influence_before = ExtractionConfig.as_samples(cfg.influence_before, dt)
-    n_influence_after = ExtractionConfig.as_samples(cfg.influence_after, dt)
-    n_min_anchor_run = ExtractionConfig.as_samples(cfg.min_anchor_run, dt)
+    n_influence_before = as_samples(cfg.influence_before, dt)
+    n_influence_after = as_samples(cfg.influence_after, dt)
+    n_min_anchor_run = as_samples(cfg.min_anchor_run, dt)
     t_min_linear_s = cfg.t_min_linear / np.timedelta64(1, "s")
 
     # Influence windows around the expected peaks approximate T₀ noise estimate on the rest.

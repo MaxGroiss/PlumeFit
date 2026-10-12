@@ -25,7 +25,7 @@ from collections import Counter
 import numpy as np
 
 from src.plume_template_extraction.normalization import  normalize_plumes, area_plausibility_check
-from src.shared_services.measurement_register import MeasurementRegister
+from src.shared_services.measurement_register import MeasurementRegister, as_samples
 from src.plume_template_extraction.extraction_config import ChannelQAConfig, ExtractionConfig
 from src.plume_template_extraction.extraction_result import ExtractionResult, BatchResult
 from src.plume_template_extraction.plume_status import PlumeStatus
@@ -166,16 +166,16 @@ def find_pollutant_peak(poll_data:np.ndarray, co2_peak_idx:np.ndarray, poll_bg:n
     # AI-Assisted: <Opus 5> ; (Review of indexing)
 
     # Convert Time Windows in Sample Windows
-    band_before_co2_peak = config.as_samples(qa.band_before_co2_peak, dt)
-    band_after_co2_peak = config.as_samples(qa.band_after_co2_peak, dt)
+    band_before_co2_peak = as_samples(qa.band_before_co2_peak, dt)
+    band_after_co2_peak = as_samples(qa.band_after_co2_peak, dt)
 
-    window_before_peak = config.as_samples(config.window_before_peak, dt)
-    window_after_peak = config.as_samples(config.window_after_peak, dt)
+    window_before_peak = as_samples(config.window_before_peak, dt)
+    window_after_peak = as_samples(config.window_after_peak, dt)
 
-    min_physical_run = config.as_samples(qa.min_physical_run, dt)
+    min_physical_run = as_samples(qa.min_physical_run, dt)
 
     # Savgol window: time -> samples; scipy requires an odd window larger than the polyorder
-    smooth_window = max(config.as_samples(qa.smooth_window, dt), qa.smooth_polyorder + 1)
+    smooth_window = max(as_samples(qa.smooth_window, dt), qa.smooth_polyorder + 1)
     if smooth_window % 2 == 0:
         smooth_window += 1
 
@@ -239,14 +239,14 @@ def extract_plumes(register: MeasurementRegister,
     source_day = register.source_day
 
     # Config durations -> samples
-    n_before_lb = config.as_samples(config.window_before, dt)
-    n_after_lb = config.as_samples(config.window_after, dt)
-    n_before_peak = config.as_samples(config.window_before_peak, dt)
-    n_after_peak = config.as_samples(config.window_after_peak, dt)
-    n_peak_search = config.as_samples(config.peak_search_after, dt)
-    n_bg_window = config.as_samples(config.bg_rolling_window, dt)
-    n_co2_phys_run = config.as_samples(config.co2_qa.min_physical_run, dt)
-    n_anchor = config.as_samples(config.baseline_anchor, dt)
+    n_before_lb = as_samples(config.window_before, dt)
+    n_after_lb = as_samples(config.window_after, dt)
+    n_before_peak = as_samples(config.window_before_peak, dt)
+    n_after_peak = as_samples(config.window_after_peak, dt)
+    n_peak_search = as_samples(config.peak_search_after, dt)
+    n_bg_window = as_samples(config.bg_rolling_window, dt)
+    n_co2_phys_run = as_samples(config.co2_qa.min_physical_run, dt)
+    n_anchor = as_samples(config.baseline_anchor, dt)
 
 
     # 1. Isolation and Light Barrier Windows ---------------------------------------------------------------------------
@@ -338,7 +338,7 @@ def extract_plumes(register: MeasurementRegister,
             channel=poll_data, percentile=config.bg_percentile,
             rolling_window=n_bg_window,
             min_physical_value=config.pollutant_qa.min_physical_value,
-            min_physical_run=config.as_samples(config.pollutant_qa.min_physical_run, dt)
+            min_physical_run=as_samples(config.pollutant_qa.min_physical_run, dt)
         )
 
         # Aligned with lb_valid (keeps the indexing simple, CO₂-invalid rows are masked later)
@@ -360,7 +360,7 @@ def extract_plumes(register: MeasurementRegister,
         poll_null = np.zeros(poll_statuses.shape[0], dtype=bool)
         poll_null[poll_in_bounds] = null_data_mask(
             poll_peak_windows, config.pollutant_qa.min_physical_value,
-            config.as_samples(config.pollutant_qa.min_physical_run, dt))
+            as_samples(config.pollutant_qa.min_physical_run, dt))
         # For a pollutant plume to be finally valid it has to have a valid co2 plume, be in bounds (poll_in_bounds)
         # and counted as valid in find_pollutant_peak -> poll_loc_status
         poll_valid = co2_valid & (poll_statuses == PlumeStatus.VALID) & poll_in_bounds

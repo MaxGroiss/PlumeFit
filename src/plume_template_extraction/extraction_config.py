@@ -192,18 +192,3 @@ class ExtractionConfig:
             raise ValueError("Window Before must be smaller than Minimum Gap.")
         if self.baseline_anchor >= self.window_before_peak:
             raise ValueError("Baseline Anchor needs to fit in the window before the peak.")
-
-    # TODO: Could be moved in a separate file -> normalisation to eliminate the need of importing the whole class for
-    #    this method
-    @staticmethod
-    def as_samples(td: np.timedelta64, dt: float) -> int:
-        """Convert a duration into a number of samples.
-
-        Args:
-            td: Duration.
-            dt: Sampling interval [s].
-
-        Returns:
-            Number of samples, rounded to the nearest integer.
-        """
-        return round(td / np.timedelta64(1, "s") / dt)
