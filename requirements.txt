@@ -1,0 +1,6 @@
+# Versions PlumeFit was tested with (Python 3.13 and 3.14)
+numpy==2.5.2
+pandas==3.0.5
+scipy==1.18.0
+# Only for the optional implementations/impl_templates/fitting_pipeline/plot_pass.py
+matplotlib==3.11.2

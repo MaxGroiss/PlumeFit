@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+
+# Run folders of the templates (timestamped, see implementations/helpers/run_dirs.py) and copied fitting inputs
+implementations/impl_templates/*/results/
+implementations/impl_templates/fitting_pipeline/data_needed_for_fitting/
